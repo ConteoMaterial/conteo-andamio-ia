@@ -1,0 +1,6 @@
+﻿streamlit
+ultralytics
+opencv-python-headless
+gspread
+oauth2client
+google-api-python-client
