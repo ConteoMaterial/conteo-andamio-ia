@@ -1,5 +1,5 @@
 ﻿import streamlit as st
-import cv2
+from PIL import Image, ImageDraw
 import numpy as np
 from ultralytics import YOLO
 import gspread
@@ -92,11 +92,13 @@ def upload_image_to_drive(file_bytes, filename, folder_id, drive_service, mime_t
 
 def process_image(uploaded_file, tipo_material):
     file_bytes = uploaded_file.getvalue()
-    img = cv2.imdecode(np.frombuffer(file_bytes, np.uint8), cv2.IMREAD_COLOR)
-    if img is None:
+    try:
+        img = Image.open(io.BytesIO(file_bytes)).convert("RGB")
+    except Exception:
         raise ValueError("No se pudo leer la imagen. Intente con otro archivo.")
 
-    results = model(img)
+    img_np = np.array(img)
+    results = model(img_np)
     detections = []
     for result in results:
         for box in result.boxes:
@@ -107,9 +109,10 @@ def process_image(uploaded_file, tipo_material):
             detections.append([int(xyxy[0]), int(xyxy[1]), int(xyxy[2]), int(xyxy[3])])
 
     annotated_img = img.copy()
+    draw = ImageDraw.Draw(annotated_img)
     for x1, y1, x2, y2 in detections:
-        cv2.rectangle(annotated_img, (x1, y1), (x2, y2), (0, 0, 255), 2)
-        cv2.circle(annotated_img, (x1 + 5, y1 + 5), 5, (0, 0, 255), -1)
+        draw.rectangle([x1, y1, x2, y2], outline="red", width=2)
+        draw.ellipse([x1, y1, x1 + 10, y1 + 10], fill="red")
 
     total_detectado = len(detections)
     return annotated_img, total_detectado, file_bytes
