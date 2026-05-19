@@ -1,4 +1,4 @@
-﻿import streamlit as st
+import streamlit as st
 from PIL import Image, ImageDraw
 import numpy as np
 from ultralytics import YOLO
@@ -40,13 +40,13 @@ def load_service_account_credentials():
         "https://spreadsheets.google.com/feeds",
         "https://www.googleapis.com/auth/drive",
     ]
-    if "GOOGLE_CREDENTIALS" in st.secrets:
-        creds_dict = json.loads(st.secrets["GOOGLE_CREDENTIALS"])
+    if "gcp_service_account" in st.secrets:
+        creds_dict = dict(st.secrets["gcp_service_account"])
         return ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
     if os.path.exists("credentials.json"):
         return ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
     raise FileNotFoundError(
-        "No se encontró credentials.json ni GOOGLE_CREDENTIALS en Streamlit secrets."
+        "No se encontró credentials.json ni gcp_service_account en Streamlit secrets."
     )
 
 @st.cache_resource
@@ -183,3 +183,7 @@ else:
 
 st.markdown("---")
 st.markdown("**Notas de configuración:** Asegúrate de que la carpeta de Drive y la hoja de cálculo estén compartidas con la cuenta de servicio de Google.")
+
+
+
+
