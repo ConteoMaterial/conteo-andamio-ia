@@ -12,7 +12,7 @@ import io
 import os
 
 SHEET_ID = "1ew4P9dsQWrINTCfEc5bg-qlcUmvSfZDPXUEq6hFxlOg"
-DRIVE_FOLDER_ID = "1K1Q3d4KV_b4RzhQsFVxN_cf9u8F0Wuae"
+DRIVE_FOLDER_ID = "1njn6Hp3qoaw3kYqkErseReHhA7mrvPjA"
 PATENTE_LIST = [
     "HSFC-61", "HSFC-62", "LPXW-25", "LPXW-87",
     "TKXD-17", "LPXW-12", "THXX-18",
@@ -47,14 +47,16 @@ def upload_image_to_drive(file_bytes, filename, folder_id, drive_service, mime_t
         media = MediaIoBaseUpload(io.BytesIO(file_bytes), mimetype=mime_type, resumable=False)
         created = drive_service.files().create(
             body={"name": filename, "parents": [folder_id]},
-            media_body=media, fields="id,webViewLink"
+            media_body=media, fields="id,webViewLink",
+            supportsAllDrives=True
         ).execute()
         if created.get("id"):
             try:
                 drive_service.permissions().create(
                     fileId=created["id"],
                     body={"type": "anyone", "role": "reader"},
-                    fields="id"
+                    fields="id",
+                    supportsAllDrives=True
                 ).execute()
             except Exception:
                 pass
@@ -63,96 +65,52 @@ def upload_image_to_drive(file_bytes, filename, folder_id, drive_service, mime_t
         st.error(f"Error subiendo foto: {e}")
     return ""
 
-def detectar_verticales(image_bytes):
-    img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-    img_np = np.array(img)
-    alto, ancho = img_np.shape[:2]
-
-    gris = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
-    gris = cv2.GaussianBlur(gris, (9, 9), 2)
-
-    radio_min = int(min(alto, ancho) * 0.04)
-    radio_max = int(min(alto, ancho) * 0.12)
-
-    circulos = cv2.HoughCircles(
-        gris, cv2.HOUGH_GRADIENT,
-        dp=1.2, minDist=radio_min * 2,
-        param1=100, param2=38,
-        minRadius=radio_min, maxRadius=radio_max,
-    )
-
-    resultado_np = img_np.copy()
-    detecciones = []
-
-    if circulos is not None:
-        circulos = np.round(circulos[0, :]).astype("int")
-        for (x, y, r) in circulos:
-            y1, y2 = max(0, y - r//2), min(alto, y + r//2)
-            x1, x2 = max(0, x - r//2), min(ancho, x + r//2)
-            centro = gris[y1:y2, x1:x2]
-            if centro.size == 0:
-                continue
-            brillo_centro = np.mean(centro)
-            # Comparar centro vs borde para filtrar rosetas
-            yr1, yr2 = max(0, y - r), min(alto, y + r)
-            xr1, xr2 = max(0, x - r), min(ancho, x + r)
-            borde = gris[yr1:yr2, xr1:xr2]
-            brillo_borde = np.mean(borde) if borde.size > 0 else brillo_centro
-            if brillo_centro < 155 and brillo_centro < brillo_borde * 0.88:
-                detecciones.append((x, y, r))
-
-    for idx, (x, y, r) in enumerate(detecciones):
-        numero = idx + 1
-        tam_cruz = int(r * 0.8)
-        grosor = max(3, r // 8)
-        cv2.line(resultado_np, (x - tam_cruz, y), (x + tam_cruz, y), (0, 0, 0), grosor)
-        cv2.line(resultado_np, (x, y - tam_cruz), (x, y + tam_cruz), (0, 0, 0), grosor)
-        font_scale = max(0.6, r / 25)
-        font_thickness = max(2, r // 12)
-        text = str(numero)
-        (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, font_thickness)
-        tx, ty = x - tw // 2, y + th // 2
-        cv2.putText(resultado_np, text, (tx-1, ty-1), cv2.FONT_HERSHEY_SIMPLEX,
-                    font_scale, (255, 255, 255), font_thickness + 2, cv2.LINE_AA)
-        cv2.putText(resultado_np, text, (tx, ty), cv2.FONT_HERSHEY_SIMPLEX,
-                    font_scale, (255, 0, 0), font_thickness, cv2.LINE_AA)
-
-    return Image.fromarray(resultado_np), len(detecciones)
-
-def dibujar_puntos(image_bytes, puntos, max_width=380):
+def dibujar_puntos(image_bytes, puntos, tipo="horizontal", max_width=380):
     img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
     w, h = img.size
     if w > max_width:
         ratio = max_width / w
         img = img.resize((max_width, int(h * ratio)), Image.LANCZOS)
     img_np = np.array(img)
-    radio = max(14, min(img_np.shape[1], img_np.shape[0]) // 22)
+    ih, iw = img_np.shape[:2]
+    radio = max(10, min(iw, ih) // 28)
+
     for idx, (px, py) in enumerate(puntos):
-        cv2.circle(img_np, (px, py), radio, (220, 0, 0), -1)
-        cv2.circle(img_np, (px, py), radio, (255, 255, 255), 2)
-        text = str(idx + 1)
-        font_scale = max(0.4, radio / 18)
-        thickness = max(1, radio // 10)
-        (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness)
-        cv2.putText(img_np, text, (px - tw//2, py + th//2),
-                    cv2.FONT_HERSHEY_SIMPLEX, font_scale, (255, 255, 255), thickness, cv2.LINE_AA)
+        numero = idx + 1
+        if tipo == "vertical":
+            tam_cruz = int(radio * 1.2)
+            grosor = max(2, radio // 6)
+            cv2.line(img_np, (px - tam_cruz, py), (px + tam_cruz, py), (0, 0, 0), grosor)
+            cv2.line(img_np, (px, py - tam_cruz), (px, py + tam_cruz), (0, 0, 0), grosor)
+            font_scale = max(0.4, radio / 18)
+            thickness = max(1, radio // 10)
+            text = str(numero)
+            (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness)
+            cv2.putText(img_np, text, (px - tw//2 - 1, py + th//2 - 1),
+                        cv2.FONT_HERSHEY_SIMPLEX, font_scale, (255, 255, 255), thickness + 2, cv2.LINE_AA)
+            cv2.putText(img_np, text, (px - tw//2, py + th//2),
+                        cv2.FONT_HERSHEY_SIMPLEX, font_scale, (255, 0, 0), thickness, cv2.LINE_AA)
+        else:
+            cv2.circle(img_np, (px, py), radio, (220, 0, 0), -1)
+            cv2.circle(img_np, (px, py), radio, (255, 255, 255), 2)
+            font_scale = max(0.35, radio / 20)
+            thickness = max(1, radio // 10)
+            text = str(numero)
+            (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness)
+            cv2.putText(img_np, text, (px - tw//2, py + th//2),
+                        cv2.FONT_HERSHEY_SIMPLEX, font_scale, (255, 255, 255), thickness, cv2.LINE_AA)
+
     return Image.fromarray(img_np)
 
-def redimensionar(image_bytes, max_width=380):
-    img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-    w, h = img.size
-    if w > max_width:
-        ratio = max_width / w
-        img = img.resize((max_width, int(h * ratio)), Image.LANCZOS)
-    return img
-
 # ── ESTADO ──────────────────────────────────────────────────────────────────
-if "analysis" not in st.session_state:
-    st.session_state.analysis = {}
+if "puntos_v" not in st.session_state:
+    st.session_state.puntos_v = []
+if "ultimo_click_v" not in st.session_state:
+    st.session_state.ultimo_click_v = None
 if "puntos_h" not in st.session_state:
     st.session_state.puntos_h = []
-if "ultimo_click" not in st.session_state:
-    st.session_state.ultimo_click = None
+if "ultimo_click_h" not in st.session_state:
+    st.session_state.ultimo_click_h = None
 
 # ── UI ──────────────────────────────────────────────────────────────────────
 st.title("🏗️ AI-Count: Auditoría de Andamios")
@@ -161,11 +119,12 @@ st.markdown("Sistema de auditoría logística para contar piezas de andamiaje de
 patente = st.selectbox("Patente del Camión:", PATENTE_LIST)
 tipo = st.radio("Tipo de material:", ["Verticales", "Horizontales"], horizontal=True)
 
-if tipo == "Horizontales":
-    if st.button("🔄 Limpiar marcas"):
-        st.session_state.puntos_h = []
-        st.session_state.ultimo_click = None
-        st.rerun()
+if st.button("🔄 Limpiar marcas"):
+    st.session_state.puntos_v = []
+    st.session_state.ultimo_click_v = None
+    st.session_state.puntos_h = []
+    st.session_state.ultimo_click_h = None
+    st.rerun()
 
 uploaded_file = st.file_uploader("Suba una foto del material:", type=["jpg", "jpeg", "png"])
 
@@ -174,40 +133,31 @@ if uploaded_file is not None:
 
     # ── VERTICALES ──────────────────────────────────────────────────────────
     if tipo == "Verticales":
-        if st.button("Contar Verticales automáticamente"):
-            with st.spinner("Analizando imagen..."):
-                resultado_img, total = detectar_verticales(file_bytes)
-                st.session_state.analysis = {
-                    "tipo_material": "Verticales",
-                    "annotated_img": resultado_img,
-                    "total": total,
-                    "file_bytes": file_bytes,
-                }
+        st.markdown("### Toca cada hoyo de tubo en la foto")
+        st.caption("Cruz negra + número rojo en cada toque. Limpiar para empezar de nuevo.")
 
-        if st.session_state.analysis.get("tipo_material") == "Verticales":
-            an = st.session_state.analysis
-            if an["total"] < 20:
-                st.warning(f"Se detectaron {an['total']} tubos — verifica que la foto sea de frente.")
-            elif an["total"] > 104:
-                st.warning(f"Se detectaron {an['total']} tubos — por encima del máximo (104).")
-            else:
-                st.success(f"Se detectaron {an['total']} tubos verticales.")
+        img_display = dibujar_puntos(file_bytes, st.session_state.puntos_v, tipo="vertical")
+        valor = streamlit_image_coordinates(img_display, key="coord_v")
 
-            st.image(an["annotated_img"],
-                     caption=f"Detectados: {an['total']} tubos",
-                     use_column_width=True)
+        if valor is not None and valor != st.session_state.ultimo_click_v:
+            st.session_state.ultimo_click_v = valor
+            st.session_state.puntos_v.append((valor["x"], valor["y"]))
+            st.rerun()
 
-            correccion = st.number_input(
-                "Corregir conteo si es necesario:",
-                min_value=0,
-                value=an["total"],
-                step=1
-            )
+        total_v = len(st.session_state.puntos_v)
 
+        if total_v == 0:
+            st.info("Toca cada hoyo de tubo en la foto para comenzar el conteo.")
+        elif total_v > 104:
+            st.warning(f"Total marcados: **{total_v}** — por encima del máximo (104). Verifica.")
+        else:
+            st.success(f"Total marcados: **{total_v}**")
+
+        if total_v > 0:
             st.markdown("---")
             st.write(f"**Patente:** {patente}")
             st.write(f"**Tipo:** Verticales")
-            st.write(f"**Total:** {correccion} piezas")
+            st.write(f"**Total:** {total_v} piezas")
 
             if st.button("💾 Confirmar y Guardar Auditoría", key="guardar_v"):
                 try:
@@ -223,26 +173,27 @@ if uploaded_file is not None:
                     sheet.append_row([
                         timestamp.strftime("%Y-%m-%d"),
                         timestamp.strftime("%H:%M:%S"),
-                        patente, "Verticales", correccion, photo_link
+                        patente, "Verticales", total_v, photo_link
                     ])
                     st.success("Auditoría guardada en Google Sheets.")
                     if photo_link:
                         st.markdown(f"[Ver foto en Drive]({photo_link})")
-                    st.session_state.analysis = {}
+                    st.session_state.puntos_v = []
+                    st.session_state.ultimo_click_v = None
+                    st.rerun()
                 except Exception as e:
                     st.error(f"Error al guardar: {e}")
 
     # ── HORIZONTALES ────────────────────────────────────────────────────────
     elif tipo == "Horizontales":
         st.markdown("### Toca cada cabezal en la foto")
-        st.caption("Cada toque agrega un número rojo. Toca Limpiar para empezar de nuevo.")
+        st.caption("Cada toque agrega un número rojo. Limpiar para empezar de nuevo.")
 
-        img_display = dibujar_puntos(file_bytes, st.session_state.puntos_h)
-
+        img_display = dibujar_puntos(file_bytes, st.session_state.puntos_h, tipo="horizontal")
         valor = streamlit_image_coordinates(img_display, key="coord_h")
 
-        if valor is not None and valor != st.session_state.ultimo_click:
-            st.session_state.ultimo_click = valor
+        if valor is not None and valor != st.session_state.ultimo_click_h:
+            st.session_state.ultimo_click_h = valor
             st.session_state.puntos_h.append((valor["x"], valor["y"]))
             st.rerun()
 
@@ -281,7 +232,8 @@ if uploaded_file is not None:
                     if photo_link:
                         st.markdown(f"[Ver foto en Drive]({photo_link})")
                     st.session_state.puntos_h = []
-                    st.session_state.ultimo_click = None
+                    st.session_state.ultimo_click_h = None
+                    st.rerun()
                 except Exception as e:
                     st.error(f"Error al guardar: {e}")
 
