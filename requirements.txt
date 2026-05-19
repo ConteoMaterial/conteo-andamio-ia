@@ -5,3 +5,4 @@ oauth2client
 google-api-python-client
 Pillow
 numpy
+streamlit-drawable-canvas
