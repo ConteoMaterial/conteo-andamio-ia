@@ -6,10 +6,10 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
+from streamlit_drawable_canvas import st_canvas
 import datetime
 import io
 import os
-import base64
 
 SHEET_ID = "1ew4P9dsQWrINTCfEc5bg-qlcUmvSfZDPXUEq6hFxlOg"
 DRIVE_FOLDER_ID = "1K1Q3d4KV_b4RzhQsFVxN_cf9u8F0Wuae"
@@ -71,8 +71,8 @@ def detectar_verticales(image_bytes):
     gris = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
     gris = cv2.GaussianBlur(gris, (9, 9), 2)
 
-    radio_min = int(min(alto, ancho) * 0.025)
-    radio_max = int(min(alto, ancho) * 0.10)
+    radio_min = int(min(alto, ancho) * 0.04)
+    radio_max = int(min(alto, ancho) * 0.12)
 
     circulos = cv2.HoughCircles(
         gris,
@@ -85,135 +85,74 @@ def detectar_verticales(image_bytes):
         maxRadius=radio_max,
     )
 
-    resultado = img.copy()
-    draw = ImageDraw.Draw(resultado)
+    resultado_np = img_np.copy()
     detecciones = []
 
     if circulos is not None:
         circulos = np.round(circulos[0, :]).astype("int")
-        # Filtrar solo hoyos oscuros (interior oscuro = hoyo de tubo)
         for (x, y, r) in circulos:
-            region = gris[max(0, y-r//2):y+r//2, max(0, x-r//2):x+r//2]
-            if region.size > 0 and np.mean(region) < 130:
+            y1, y2 = max(0, y - r//2), min(alto, y + r//2)
+            x1, x2 = max(0, x - r//2), min(ancho, x + r//2)
+            region = gris[y1:y2, x1:x2]
+            if region.size > 0 and np.mean(region) < 140:
                 detecciones.append((x, y, r))
 
     total = len(detecciones)
 
     for idx, (x, y, r) in enumerate(detecciones):
         numero = idx + 1
-        tam_cruz = int(r * 0.75)
-        tam_num = max(int(r * 0.45), 14)
+        tam_cruz = int(r * 0.8)
+        grosor = max(3, r // 8)
 
-        # Cruz negra dentro del hoyo
-        draw.line([(x - tam_cruz, y), (x + tam_cruz, y)], fill=(0, 0, 0), width=max(3, r//8))
-        draw.line([(x, y - tam_cruz), (x, y + tam_cruz)], fill=(0, 0, 0), width=max(3, r//8))
+        # Cruz negra
+        cv2.line(resultado_np, (x - tam_cruz, y), (x + tam_cruz, y), (0, 0, 0), grosor)
+        cv2.line(resultado_np, (x, y - tam_cruz), (x, y + tam_cruz), (0, 0, 0), grosor)
 
-        # Número rojo centrado en la cruz
-        bbox = draw.textbbox((0, 0), str(numero))
-        tw = bbox[2] - bbox[0]
-        th = bbox[3] - bbox[1]
-        draw.text((x - tw//2, y - th//2), str(numero), fill=(255, 0, 0))
+        # Número rojo con sombra blanca para legibilidad
+        font_scale = max(0.6, r / 25)
+        font_thickness = max(2, r // 12)
+        text = str(numero)
+        (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, font_thickness)
+        tx = x - tw // 2
+        ty = y + th // 2
+        cv2.putText(resultado_np, text, (tx - 1, ty - 1), cv2.FONT_HERSHEY_SIMPLEX,
+                    font_scale, (255, 255, 255), font_thickness + 2, cv2.LINE_AA)
+        cv2.putText(resultado_np, text, (tx, ty), cv2.FONT_HERSHEY_SIMPLEX,
+                    font_scale, (255, 0, 0), font_thickness, cv2.LINE_AA)
 
-    return resultado, total
+    return Image.fromarray(resultado_np), total
 
-def canvas_horizontal(image_bytes, count):
-    b64 = base64.b64encode(image_bytes).decode("utf-8")
-    html = f"""
-    <div style="width:100%; font-family:Arial, sans-serif;">
-        <canvas id="cv" style="width:100%; touch-action:none; border:2px solid #ddd; border-radius:8px;"></canvas>
-        <div style="margin-top:12px; display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
-            <div style="font-size:24px; font-weight:bold; color:#cc0000;">
-                Marcados: <span id="cnt">{count}</span>
-            </div>
-            <button onclick="deshacer()" style="padding:12px 20px; font-size:16px; background:#cc0000; color:white; border:none; border-radius:8px; cursor:pointer;">
-                ↩ Deshacer
-            </button>
-            <button onclick="limpiar()" style="padding:12px 20px; font-size:16px; background:#555; color:white; border:none; border-radius:8px; cursor:pointer;">
-                🗑 Limpiar
-            </button>
-        </div>
-    </div>
-    <script>
-        const cv = document.getElementById('cv');
-        const ctx = cv.getContext('2d');
-        const img = new Image();
-        let pts = [];
+def generar_imagen_numerada(image_bytes, puntos, max_width=360):
+    img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    w, h = img.size
+    if w > max_width:
+        ratio = max_width / w
+        img = img.resize((max_width, int(h * ratio)), Image.LANCZOS)
+        puntos = [(int(p[0]), int(p[1])) for p in puntos]
 
-        img.onload = function() {{
-            cv.width = img.naturalWidth;
-            cv.height = img.naturalHeight;
-            dibujar();
-        }};
-        img.src = 'data:image/jpeg;base64,{b64}';
+    img_np = np.array(img)
+    for idx, (px, py) in enumerate(puntos):
+        numero = idx + 1
+        radio = max(15, min(w, h) // 20)
+        cv2.circle(img_np, (px, py), radio, (220, 0, 0), -1)
+        cv2.circle(img_np, (px, py), radio, (255, 255, 255), 2)
+        font_scale = max(0.4, radio / 20)
+        thickness = max(1, radio // 10)
+        text = str(numero)
+        (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness)
+        cv2.putText(img_np, text, (px - tw//2, py + th//2),
+                    cv2.FONT_HERSHEY_SIMPLEX, font_scale, (255, 255, 255), thickness, cv2.LINE_AA)
+    return Image.fromarray(img_np)
 
-        function dibujar() {{
-            ctx.clearRect(0, 0, cv.width, cv.height);
-            ctx.drawImage(img, 0, 0);
-            pts.forEach(function(p, i) {{
-                const r = Math.max(cv.width, cv.height) * 0.022;
-                ctx.beginPath();
-                ctx.arc(p[0], p[1], r, 0, 2 * Math.PI);
-                ctx.fillStyle = 'rgba(220,0,0,0.82)';
-                ctx.fill();
-                ctx.strokeStyle = 'white';
-                ctx.lineWidth = r * 0.18;
-                ctx.stroke();
-                ctx.fillStyle = 'white';
-                ctx.font = 'bold ' + Math.round(r * 1.1) + 'px Arial';
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
-                ctx.fillText(i + 1, p[0], p[1]);
-            }});
-            document.getElementById('cnt').innerText = pts.length;
-            notificar();
-        }}
-
-        function getPos(e) {{
-            const rect = cv.getBoundingClientRect();
-            const sx = cv.width / rect.width;
-            const sy = cv.height / rect.height;
-            if (e.changedTouches) {{
-                return [(e.changedTouches[0].clientX - rect.left) * sx,
-                        (e.changedTouches[0].clientY - rect.top) * sy];
-            }}
-            return [(e.clientX - rect.left) * sx, (e.clientY - rect.top) * sy];
-        }}
-
-        cv.addEventListener('touchend', function(e) {{
-            e.preventDefault();
-            pts.push(getPos(e));
-            dibujar();
-        }}, {{passive: false}});
-
-        cv.addEventListener('click', function(e) {{
-            pts.push(getPos(e));
-            dibujar();
-        }});
-
-        function deshacer() {{
-            if (pts.length > 0) {{ pts.pop(); dibujar(); }}
-        }}
-
-        function limpiar() {{
-            pts = []; dibujar();
-        }}
-
-        function notificar() {{
-            window.parent.postMessage({{
-                isStreamlitMessage: true,
-                type: 'streamlit:setComponentValue',
-                value: pts.length
-            }}, '*');
-        }}
-
-        setTimeout(notificar, 500);
-    </script>
-    """
-    return st.components.v1.html(html, height=720, scrolling=False)
+def preparar_imagen_canvas(image_bytes, max_width=360):
+    img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    w, h = img.size
+    if w > max_width:
+        ratio = max_width / w
+        img = img.resize((max_width, int(h * ratio)), Image.LANCZOS)
+    return img
 
 # ── ESTADO ──────────────────────────────────────────────────────────────────
-if "total_horizontal" not in st.session_state:
-    st.session_state.total_horizontal = 0
 if "analysis" not in st.session_state:
     st.session_state.analysis = {}
 
@@ -245,7 +184,7 @@ if uploaded_file is not None:
             if an["total"] < 20:
                 st.warning(f"Se detectaron {an['total']} tubos — verifica que la foto sea de frente.")
             elif an["total"] > 104:
-                st.warning(f"Se detectaron {an['total']} tubos — por encima del máximo (104). Verifica.")
+                st.warning(f"Se detectaron {an['total']} tubos — por encima del máximo (104).")
             else:
                 st.success(f"Se detectaron {an['total']} tubos verticales.")
 
@@ -282,7 +221,7 @@ if uploaded_file is not None:
                         timestamp.strftime("%H:%M:%S"),
                         patente, "Verticales", correccion, photo_link
                     ])
-                    st.success("Auditoría guardada correctamente en Google Sheets.")
+                    st.success("Auditoría guardada en Google Sheets.")
                     if photo_link:
                         st.markdown(f"[Ver foto en Drive]({photo_link})")
                     st.session_state.analysis = {}
@@ -292,35 +231,47 @@ if uploaded_file is not None:
     # ── HORIZONTALES ────────────────────────────────────────────────────────
     elif tipo == "Horizontales":
         st.markdown("### Toca cada cabezal en la foto")
-        st.caption("Círculo rojo + número en cada toque. Usa Deshacer si te equivocas.")
+        st.caption("Cada toque marca un círculo. El conteo sube automáticamente.")
 
-        canvas_horizontal(file_bytes, st.session_state.total_horizontal)
+        img_canvas = preparar_imagen_canvas(file_bytes)
+        cw, ch = img_canvas.size
 
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            if st.button("➕ Sumar 1"):
-                st.session_state.total_horizontal += 1
-                st.rerun()
-        with col2:
-            if st.button("➖ Restar 1") and st.session_state.total_horizontal > 0:
-                st.session_state.total_horizontal -= 1
-                st.rerun()
-        with col3:
-            if st.button("🔄 Reiniciar"):
-                st.session_state.total_horizontal = 0
-                st.rerun()
+        canvas_result = st_canvas(
+            fill_color="rgba(220, 0, 0, 0.85)",
+            stroke_width=3,
+            stroke_color="#FFFFFF",
+            background_image=img_canvas,
+            update_streamlit=True,
+            height=ch,
+            width=cw,
+            drawing_mode="point",
+            point_display_radius=18,
+            key="canvas_h",
+        )
 
-        total_h = st.session_state.total_horizontal
+        total_h = 0
+        puntos = []
+        if canvas_result.json_data is not None:
+            objects = canvas_result.json_data.get("objects", [])
+            total_h = len(objects)
+            puntos = [(int(obj.get("left", 0) + 18), int(obj.get("top", 0) + 18))
+                      for obj in objects]
+
         if total_h == 0:
             st.info("Toca los cabezales en la foto para comenzar el conteo.")
         elif total_h < 40:
-            st.warning(f"Total: **{total_h}** — por debajo del mínimo esperado (40).")
+            st.warning(f"Total marcados: **{total_h}** — por debajo del mínimo esperado (40).")
         elif total_h > 212:
-            st.warning(f"Total: **{total_h}** — por encima del máximo (212). Verifica.")
+            st.warning(f"Total marcados: **{total_h}** — por encima del máximo (212). Verifica.")
         else:
             st.success(f"Total marcados: **{total_h}**")
 
         if total_h > 0:
+            img_numerada = generar_imagen_numerada(file_bytes, puntos)
+            st.image(img_numerada,
+                     caption=f"Verificación: {total_h} cabezales marcados",
+                     use_column_width=True)
+
             st.markdown("---")
             st.write(f"**Patente:** {patente}")
             st.write(f"**Tipo:** Horizontales")
@@ -342,10 +293,9 @@ if uploaded_file is not None:
                         timestamp.strftime("%H:%M:%S"),
                         patente, "Horizontales", total_h, photo_link
                     ])
-                    st.success("Auditoría guardada correctamente en Google Sheets.")
+                    st.success("Auditoría guardada en Google Sheets.")
                     if photo_link:
                         st.markdown(f"[Ver foto en Drive]({photo_link})")
-                    st.session_state.total_horizontal = 0
                 except Exception as e:
                     st.error(f"Error al guardar: {e}")
 
