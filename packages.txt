@@ -2,9 +2,3 @@ libsm6
 libxext6
 libxrender-dev
 libgl1
-libgl1-mesa-dri
-libglib2.0-0
-libglib2.0-data
-libffi8
-shared-mime-info
-xdg-user-dirs
