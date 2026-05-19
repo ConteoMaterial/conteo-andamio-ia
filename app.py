@@ -1,38 +1,24 @@
 import streamlit as st
 from PIL import Image, ImageDraw
 import numpy as np
-from ultralytics import YOLO
+import cv2
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
 import datetime
 import io
-import json
 import os
 
 SHEET_ID = "1ew4P9dsQWrINTCfEc5bg-qlcUmvSfZDPXUEq6hFxlOg"
 DRIVE_FOLDER_ID = "1K1Q3d4KV_b4RzhQsFVxN_cf9u8F0Wuae"
 PATENTE_LIST = [
-    "HSFC-61",
-    "HSFC-62",
-    "LPXV-25",
-    "LPXV-87",
-    "TKXD-17",
-    "LPXV-12",
-    "GTCP-49",
-    "CYGY-25",
-    "SLPX-67",
-    "THXX-18",
-    "TVJD-17",
-    "SPXW-90",
+    "HSFC-61", "HSFC-62", "LPXV-25", "LPXV-87",
+    "TKXD-17", "LPXV-12", "GTCP-49", "CYGY-25",
+    "SLPX-67", "THXX-18", "TVJD-17", "SPXW-90",
 ]
 
 st.set_page_config(page_title="AI-Count Auditoría Andamios", page_icon="🏗️", layout="wide")
-
-@st.cache_resource
-def load_model():
-    return YOLO("yolov8n.pt")
 
 @st.cache_resource
 def load_service_account_credentials():
@@ -45,36 +31,23 @@ def load_service_account_credentials():
         return ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
     if os.path.exists("credentials.json"):
         return ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
-    raise FileNotFoundError(
-        "No se encontró credentials.json ni gcp_service_account en Streamlit secrets."
-    )
+    raise FileNotFoundError("No se encontraron credenciales.")
 
 @st.cache_resource
 def connect_to_sheets():
-    creds = load_service_account_credentials()
-    return gspread.authorize(creds)
+    return gspread.authorize(load_service_account_credentials())
 
 @st.cache_resource
 def build_drive_service():
-    creds = load_service_account_credentials()
-    return build("drive", "v3", credentials=creds, cache_discovery=False)
-
-@st.cache_resource
-def get_model():
-    return load_model()
-
-model = get_model()
-
+    return build("drive", "v3", credentials=load_service_account_credentials(), cache_discovery=False)
 
 def upload_image_to_drive(file_bytes, filename, folder_id, drive_service, mime_type="image/jpeg"):
     try:
         media = MediaIoBaseUpload(io.BytesIO(file_bytes), mimetype=mime_type, resumable=False)
         file_metadata = {"name": filename, "parents": [folder_id]}
-        created_file = (
-            drive_service.files()
-            .create(body=file_metadata, media_body=media, fields="id,webViewLink")
-            .execute()
-        )
+        created_file = drive_service.files().create(
+            body=file_metadata, media_body=media, fields="id,webViewLink"
+        ).execute()
         if created_file and created_file.get("id"):
             try:
                 drive_service.permissions().create(
@@ -89,74 +62,106 @@ def upload_image_to_drive(file_bytes, filename, folder_id, drive_service, mime_t
         st.error(f"Error al subir la foto a Drive: {e}")
     return ""
 
-
-def process_image(uploaded_file, tipo_material):
-    file_bytes = uploaded_file.getvalue()
-    try:
-        img = Image.open(io.BytesIO(file_bytes)).convert("RGB")
-    except Exception:
-        raise ValueError("No se pudo leer la imagen. Intente con otro archivo.")
-
+def detectar_verticales(image_bytes):
+    img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
     img_np = np.array(img)
-    results = model(img_np)
-    detections = []
-    for result in results:
-        for box in result.boxes:
-            conf = float(box.conf[0]) if hasattr(box, "conf") else float(box.conf)
-            if conf < 0.35:
-                continue
-            xyxy = box.xyxy[0].tolist()
-            detections.append([int(xyxy[0]), int(xyxy[1]), int(xyxy[2]), int(xyxy[3])])
-
-    annotated_img = img.copy()
-    draw = ImageDraw.Draw(annotated_img)
-    for x1, y1, x2, y2 in detections:
-        draw.rectangle([x1, y1, x2, y2], outline="red", width=2)
-        draw.ellipse([x1, y1, x1 + 10, y1 + 10], fill="red")
-
-    total_detectado = len(detections)
-    return annotated_img, total_detectado, file_bytes
-
+    gris = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
+    gris = cv2.medianBlur(gris, 5)
+    alto, ancho = gris.shape
+    radio_min = int(min(alto, ancho) * 0.015)
+    radio_max = int(min(alto, ancho) * 0.08)
+    circulos = cv2.HoughCircles(
+        gris,
+        cv2.HOUGH_GRADIENT,
+        dp=1.2,
+        minDist=radio_min * 2,
+        param1=80,
+        param2=35,
+        minRadius=radio_min,
+        maxRadius=radio_max,
+    )
+    resultado = img.copy()
+    draw = ImageDraw.Draw(resultado)
+    total = 0
+    if circulos is not None:
+        circulos = np.round(circulos[0, :]).astype("int")
+        for (x, y, r) in circulos:
+            draw.ellipse([x - r, y - r, x + r, y + r], outline="red", width=3)
+            draw.ellipse([x - 4, y - 4, x + 4, y + 4], fill="red")
+            total += 1
+    return resultado, total
 
 st.title("🏗️ AI-Count: Auditoría de Andamios")
 st.markdown("Sistema de auditoría logística para contar piezas de andamiaje desde el celular.")
 
+if "conteo_asistido" not in st.session_state:
+    st.session_state.conteo_asistido = 0
 if "analysis" not in st.session_state:
     st.session_state.analysis = {}
 
 patente = st.selectbox("Seleccione la Patente del Camión:", PATENTE_LIST)
+tipo = st.radio("Tipo de material:", ["Verticales", "Horizontales"], horizontal=True)
 uploaded_file = st.file_uploader("Suba una foto del material:", type=["jpg", "jpeg", "png"])
 
-col1, col2 = st.columns(2)
-count_button = None
 if uploaded_file is not None:
-    with col1:
-        if st.button("Contar Horizontales"):
-            count_button = "Horizontales"
-    with col2:
-        if st.button("Contar Verticales"):
-            count_button = "Verticales"
+    file_bytes = uploaded_file.getvalue()
 
-    if count_button:
-        try:
-            annotated_img, total, file_bytes = process_image(uploaded_file, count_button)
-            st.session_state.analysis = {
-                "tipo_material": count_button,
-                "annotated_img": annotated_img,
-                "total": total,
-                "file_bytes": file_bytes,
-            }
-            st.success(f"Detección completada para {count_button}. Total: {total}")
-        except Exception as exc:
-            st.error(f"Error al procesar la imagen: {exc}")
+    if tipo == "Verticales":
+        if st.button("Contar Verticales automáticamente"):
+            with st.spinner("Detectando tubos..."):
+                resultado_img, total = detectar_verticales(file_bytes)
+                st.session_state.analysis = {
+                    "tipo_material": "Verticales",
+                    "annotated_img": resultado_img,
+                    "total": total,
+                    "file_bytes": file_bytes,
+                }
+            st.success(f"Se detectaron {total} tubos verticales.")
+
+        if st.session_state.analysis.get("tipo_material") == "Verticales":
+            st.image(st.session_state.analysis["annotated_img"],
+                     caption=f"Detectados: {st.session_state.analysis['total']} tubos",
+                     use_column_width=True)
+            st.write(f"**Conteo automático:** {st.session_state.analysis['total']} piezas")
+            correccion = st.number_input(
+                "¿Corregir conteo manualmente?",
+                min_value=0,
+                value=st.session_state.analysis["total"],
+                step=1
+            )
+            st.session_state.analysis["total"] = correccion
+
+    elif tipo == "Horizontales":
+        st.image(file_bytes, caption="Foto cargada", use_column_width=True)
+        st.markdown("### Conteo asistido — toca los botones para contar")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            if st.button("➕ Sumar 1"):
+                st.session_state.conteo_asistido += 1
+        with col2:
+            if st.button("➖ Restar 1") and st.session_state.conteo_asistido > 0:
+                st.session_state.conteo_asistido -= 1
+        with col3:
+            if st.button("🔄 Reiniciar"):
+                st.session_state.conteo_asistido = 0
+        st.markdown(f"## Conteo actual: **{st.session_state.conteo_asistido}**")
+
+        if st.session_state.conteo_asistido > 0:
+            if st.button("Confirmar conteo de Horizontales"):
+                st.session_state.analysis = {
+                    "tipo_material": "Horizontales",
+                    "annotated_img": Image.open(io.BytesIO(file_bytes)),
+                    "total": st.session_state.conteo_asistido,
+                    "file_bytes": file_bytes,
+                }
+                st.success(f"Conteo confirmado: {st.session_state.conteo_asistido} horizontales.")
 
 if st.session_state.analysis:
     analysis = st.session_state.analysis
-    st.markdown("### Resultado de la detección")
-    st.image(analysis["annotated_img"], caption=f"Resultado: {analysis['total']} piezas detectadas", use_column_width=True)
+    st.markdown("---")
     st.write(f"**Patente:** {patente}")
-    st.write(f"**Tipo de material:** {analysis['tipo_material']}")
-    st.write(f"**Conteo de piezas:** {analysis['total']}")
+    st.write(f"**Tipo:** {analysis['tipo_material']}")
+    st.write(f"**Total piezas:** {analysis['total']}")
 
     if st.button("Confirmar y Guardar Auditoría"):
         try:
@@ -166,24 +171,19 @@ if st.session_state.analysis:
             timestamp = datetime.datetime.now()
             filename = f"auditoria_{patente}_{analysis['tipo_material']}_{timestamp.strftime('%Y%m%d_%H%M%S')}.jpg"
             mime_type = uploaded_file.type or "image/jpeg"
-            photo_link = upload_image_to_drive(analysis["file_bytes"], filename, DRIVE_FOLDER_ID, drive_service, mime_type)
-
+            photo_link = upload_image_to_drive(
+                analysis["file_bytes"], filename, DRIVE_FOLDER_ID, drive_service, mime_type
+            )
             fecha = timestamp.strftime("%Y-%m-%d")
             hora = timestamp.strftime("%H:%M:%S")
-            row = [fecha, hora, patente, analysis["total"], photo_link]
-            sheet.append_row(row)
+            sheet.append_row([fecha, hora, patente, analysis["tipo_material"], analysis["total"], photo_link])
             st.success("Auditoría guardada correctamente en Google Sheets.")
             if photo_link:
                 st.markdown(f"[Ver foto en Drive]({photo_link})")
             st.session_state.analysis = {}
+            st.session_state.conteo_asistido = 0
         except Exception as exc:
-            st.error(f"No se pudo guardar la auditoría: {exc}")
-else:
-    st.info("Sube una foto y selecciona el tipo de conteo para comenzar.")
+            st.error(f"No se pudo guardar: {exc}")
 
 st.markdown("---")
-st.markdown("**Notas de configuración:** Asegúrate de que la carpeta de Drive y la hoja de cálculo estén compartidas con la cuenta de servicio de Google.")
-
-
-
-
+st.caption("AI-Count — Auditoría de Andamios")
