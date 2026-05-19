@@ -5,7 +5,6 @@ libgl1
 libgl1-mesa-dri
 libglib2.0-0
 libglib2.0-data
-libpcre3
-libffi7
+libffi8
 shared-mime-info
 xdg-user-dirs
