@@ -1,12 +1,12 @@
 import streamlit as st
-from PIL import Image, ImageDraw
+from PIL import Image
 import numpy as np
 import cv2
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
-from streamlit_drawable_canvas import st_canvas
+from streamlit_image_coordinates import streamlit_image_coordinates
 import datetime
 import io
 import os
@@ -71,19 +71,14 @@ def detectar_verticales(image_bytes):
     gris = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
     gris = cv2.GaussianBlur(gris, (9, 9), 2)
 
-    # Fix 1: radio_min más grande para ignorar rosetas
-    radio_min = int(min(alto, ancho) * 0.05)
-    radio_max = int(min(alto, ancho) * 0.13)
+    radio_min = int(min(alto, ancho) * 0.04)
+    radio_max = int(min(alto, ancho) * 0.12)
 
     circulos = cv2.HoughCircles(
-        gris,
-        cv2.HOUGH_GRADIENT,
-        dp=1.2,
-        minDist=radio_min * 2,
-        param1=100,
-        param2=38,
-        minRadius=radio_min,
-        maxRadius=radio_max,
+        gris, cv2.HOUGH_GRADIENT,
+        dp=1.2, minDist=radio_min * 2,
+        param1=100, param2=38,
+        minRadius=radio_min, maxRadius=radio_max,
     )
 
     resultado_np = img_np.copy()
@@ -95,47 +90,55 @@ def detectar_verticales(image_bytes):
             y1, y2 = max(0, y - r//2), min(alto, y + r//2)
             x1, x2 = max(0, x - r//2), min(ancho, x + r//2)
             centro = gris[y1:y2, x1:x2]
-
-            # Fix 2: umbral de oscuridad más permisivo (165)
             if centro.size == 0:
                 continue
             brillo_centro = np.mean(centro)
-
-            # Fix 3: comparar centro vs borde — tubo tiene centro oscuro y borde más claro
+            # Comparar centro vs borde para filtrar rosetas
             yr1, yr2 = max(0, y - r), min(alto, y + r)
             xr1, xr2 = max(0, x - r), min(ancho, x + r)
             borde = gris[yr1:yr2, xr1:xr2]
             brillo_borde = np.mean(borde) if borde.size > 0 else brillo_centro
-
-            if brillo_centro < 165 and brillo_centro < brillo_borde * 0.85:
+            if brillo_centro < 155 and brillo_centro < brillo_borde * 0.88:
                 detecciones.append((x, y, r))
-
-    total = len(detecciones)
 
     for idx, (x, y, r) in enumerate(detecciones):
         numero = idx + 1
         tam_cruz = int(r * 0.8)
         grosor = max(3, r // 8)
-
-        # Cruz negra
         cv2.line(resultado_np, (x - tam_cruz, y), (x + tam_cruz, y), (0, 0, 0), grosor)
         cv2.line(resultado_np, (x, y - tam_cruz), (x, y + tam_cruz), (0, 0, 0), grosor)
-
-        # Número rojo con sombra blanca
         font_scale = max(0.6, r / 25)
         font_thickness = max(2, r // 12)
         text = str(numero)
         (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, font_thickness)
-        tx = x - tw // 2
-        ty = y + th // 2
-        cv2.putText(resultado_np, text, (tx - 1, ty - 1), cv2.FONT_HERSHEY_SIMPLEX,
+        tx, ty = x - tw // 2, y + th // 2
+        cv2.putText(resultado_np, text, (tx-1, ty-1), cv2.FONT_HERSHEY_SIMPLEX,
                     font_scale, (255, 255, 255), font_thickness + 2, cv2.LINE_AA)
         cv2.putText(resultado_np, text, (tx, ty), cv2.FONT_HERSHEY_SIMPLEX,
                     font_scale, (255, 0, 0), font_thickness, cv2.LINE_AA)
 
-    return Image.fromarray(resultado_np), total
+    return Image.fromarray(resultado_np), len(detecciones)
 
-def preparar_imagen_canvas(image_bytes, max_width=360):
+def dibujar_puntos(image_bytes, puntos, max_width=380):
+    img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    w, h = img.size
+    if w > max_width:
+        ratio = max_width / w
+        img = img.resize((max_width, int(h * ratio)), Image.LANCZOS)
+    img_np = np.array(img)
+    radio = max(14, min(img_np.shape[1], img_np.shape[0]) // 22)
+    for idx, (px, py) in enumerate(puntos):
+        cv2.circle(img_np, (px, py), radio, (220, 0, 0), -1)
+        cv2.circle(img_np, (px, py), radio, (255, 255, 255), 2)
+        text = str(idx + 1)
+        font_scale = max(0.4, radio / 18)
+        thickness = max(1, radio // 10)
+        (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness)
+        cv2.putText(img_np, text, (px - tw//2, py + th//2),
+                    cv2.FONT_HERSHEY_SIMPLEX, font_scale, (255, 255, 255), thickness, cv2.LINE_AA)
+    return Image.fromarray(img_np)
+
+def redimensionar(image_bytes, max_width=380):
     img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
     w, h = img.size
     if w > max_width:
@@ -143,31 +146,13 @@ def preparar_imagen_canvas(image_bytes, max_width=360):
         img = img.resize((max_width, int(h * ratio)), Image.LANCZOS)
     return img
 
-def generar_imagen_numerada(image_bytes, puntos, max_width=360):
-    img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-    w, h = img.size
-    escala = 1.0
-    if w > max_width:
-        escala = max_width / w
-        img = img.resize((max_width, int(h * escala)), Image.LANCZOS)
-
-    img_np = np.array(img)
-    for idx, (px, py) in enumerate(puntos):
-        numero = idx + 1
-        radio = max(15, min(img_np.shape[1], img_np.shape[0]) // 20)
-        cv2.circle(img_np, (px, py), radio, (220, 0, 0), -1)
-        cv2.circle(img_np, (px, py), radio, (255, 255, 255), 2)
-        font_scale = max(0.4, radio / 20)
-        thickness = max(1, radio // 10)
-        text = str(numero)
-        (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness)
-        cv2.putText(img_np, text, (px - tw//2, py + th//2),
-                    cv2.FONT_HERSHEY_SIMPLEX, font_scale, (255, 255, 255), thickness, cv2.LINE_AA)
-    return Image.fromarray(img_np)
-
 # ── ESTADO ──────────────────────────────────────────────────────────────────
 if "analysis" not in st.session_state:
     st.session_state.analysis = {}
+if "puntos_h" not in st.session_state:
+    st.session_state.puntos_h = []
+if "ultimo_click" not in st.session_state:
+    st.session_state.ultimo_click = None
 
 # ── UI ──────────────────────────────────────────────────────────────────────
 st.title("🏗️ AI-Count: Auditoría de Andamios")
@@ -175,6 +160,13 @@ st.markdown("Sistema de auditoría logística para contar piezas de andamiaje de
 
 patente = st.selectbox("Patente del Camión:", PATENTE_LIST)
 tipo = st.radio("Tipo de material:", ["Verticales", "Horizontales"], horizontal=True)
+
+if tipo == "Horizontales":
+    if st.button("🔄 Limpiar marcas"):
+        st.session_state.puntos_h = []
+        st.session_state.ultimo_click = None
+        st.rerun()
+
 uploaded_file = st.file_uploader("Suba una foto del material:", type=["jpg", "jpeg", "png"])
 
 if uploaded_file is not None:
@@ -211,7 +203,6 @@ if uploaded_file is not None:
                 value=an["total"],
                 step=1
             )
-            st.session_state.analysis["total"] = correccion
 
             st.markdown("---")
             st.write(f"**Patente:** {patente}")
@@ -244,50 +235,27 @@ if uploaded_file is not None:
     # ── HORIZONTALES ────────────────────────────────────────────────────────
     elif tipo == "Horizontales":
         st.markdown("### Toca cada cabezal en la foto")
-        st.caption("Cada toque marca un círculo. El conteo sube automáticamente.")
+        st.caption("Cada toque agrega un número rojo. Toca Limpiar para empezar de nuevo.")
 
-        # Fix error: convertir imagen correctamente para st_canvas
-        img_canvas = preparar_imagen_canvas(file_bytes)
-        cw, ch = img_canvas.size
+        img_display = dibujar_puntos(file_bytes, st.session_state.puntos_h)
 
-        canvas_result = st_canvas(
-            fill_color="rgba(220, 0, 0, 0.85)",
-            stroke_width=3,
-            stroke_color="#FFFFFF",
-            background_image=img_canvas,
-            update_streamlit=True,
-            height=ch,
-            width=cw,
-            drawing_mode="point",
-            point_display_radius=18,
-            key="canvas_h",
-        )
+        valor = streamlit_image_coordinates(img_display, key="coord_h")
 
-        total_h = 0
-        puntos = []
-        if canvas_result.json_data is not None:
-            objects = canvas_result.json_data.get("objects", [])
-            total_h = len(objects)
-            puntos = [
-                (int(obj.get("left", 0) + 18), int(obj.get("top", 0) + 18))
-                for obj in objects
-            ]
+        if valor is not None and valor != st.session_state.ultimo_click:
+            st.session_state.ultimo_click = valor
+            st.session_state.puntos_h.append((valor["x"], valor["y"]))
+            st.rerun()
+
+        total_h = len(st.session_state.puntos_h)
 
         if total_h == 0:
             st.info("Toca los cabezales en la foto para comenzar el conteo.")
-        elif total_h < 40:
-            st.warning(f"Total marcados: **{total_h}**")
         elif total_h > 212:
             st.warning(f"Total marcados: **{total_h}** — por encima del máximo (212). Verifica.")
         else:
             st.success(f"Total marcados: **{total_h}**")
 
         if total_h > 0:
-            img_numerada = generar_imagen_numerada(file_bytes, puntos)
-            st.image(img_numerada,
-                     caption=f"Verificación: {total_h} cabezales marcados",
-                     use_column_width=True)
-
             st.markdown("---")
             st.write(f"**Patente:** {patente}")
             st.write(f"**Tipo:** Horizontales")
@@ -312,6 +280,8 @@ if uploaded_file is not None:
                     st.success("Auditoría guardada en Google Sheets.")
                     if photo_link:
                         st.markdown(f"[Ver foto en Drive]({photo_link})")
+                    st.session_state.puntos_h = []
+                    st.session_state.ultimo_click = None
                 except Exception as e:
                     st.error(f"Error al guardar: {e}")
 
