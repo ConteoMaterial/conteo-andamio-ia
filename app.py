@@ -9,6 +9,7 @@ from googleapiclient.http import MediaIoBaseUpload
 import datetime
 import io
 import os
+import base64
 
 SHEET_ID = "1ew4P9dsQWrINTCfEc5bg-qlcUmvSfZDPXUEq6hFxlOg"
 DRIVE_FOLDER_ID = "1K1Q3d4KV_b4RzhQsFVxN_cf9u8F0Wuae"
@@ -66,17 +67,17 @@ def detectar_verticales(image_bytes):
     img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
     img_np = np.array(img)
     gris = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
-    gris = cv2.medianBlur(gris, 5)
+    gris = cv2.GaussianBlur(gris, (9, 9), 2)
     alto, ancho = gris.shape
-    radio_min = int(min(alto, ancho) * 0.015)
-    radio_max = int(min(alto, ancho) * 0.08)
+    radio_min = int(min(alto, ancho) * 0.025)
+    radio_max = int(min(alto, ancho) * 0.09)
     circulos = cv2.HoughCircles(
         gris,
         cv2.HOUGH_GRADIENT,
         dp=1.2,
-        minDist=radio_min * 2,
-        param1=80,
-        param2=35,
+        minDist=radio_min * 3,
+        param1=120,
+        param2=55,
         minRadius=radio_min,
         maxRadius=radio_max,
     )
@@ -91,11 +92,106 @@ def detectar_verticales(image_bytes):
             total += 1
     return resultado, total
 
+def imagen_a_base64(image_bytes):
+    return base64.b64encode(image_bytes).decode("utf-8")
+
+def mostrar_canvas_tactil(image_bytes, puntos):
+    b64 = imagen_a_base64(image_bytes)
+    puntos_js = str([[p[0], p[1]] for p in puntos])
+    html = f"""
+    <div style="position:relative; display:inline-block; width:100%;">
+        <canvas id="canvas" style="width:100%; touch-action:none; border:2px solid #ccc;"></canvas>
+        <div style="margin-top:8px; font-size:18px; font-weight:bold; color:#e00;">
+            Marcados: <span id="contador">{len(puntos)}</span>
+        </div>
+        <button onclick="deshacer()" style="margin-top:8px; padding:10px 20px; font-size:16px; background:#e00; color:white; border:none; border-radius:8px;">
+            ↩ Deshacer último
+        </button>
+    </div>
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const img = new Image();
+        let puntos = {puntos_js};
+        let escalaX = 1;
+        let escalaY = 1;
+
+        img.onload = function() {{
+            canvas.width = img.naturalWidth;
+            canvas.height = img.naturalHeight;
+            dibujar();
+        }};
+        img.src = 'data:image/jpeg;base64,{b64}';
+
+        function dibujar() {{
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.drawImage(img, 0, 0);
+            puntos.forEach(function(p) {{
+                ctx.beginPath();
+                ctx.arc(p[0], p[1], 18, 0, 2 * Math.PI);
+                ctx.fillStyle = 'rgba(255,0,0,0.7)';
+                ctx.fill();
+                ctx.strokeStyle = 'white';
+                ctx.lineWidth = 3;
+                ctx.stroke();
+            }});
+            document.getElementById('contador').innerText = puntos.length;
+        }}
+
+        function getPos(e) {{
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            if (e.touches) {{
+                return [
+                    (e.touches[0].clientX - rect.left) * scaleX,
+                    (e.touches[0].clientY - rect.top) * scaleY
+                ];
+            }}
+            return [
+                (e.clientX - rect.left) * scaleX,
+                (e.clientY - rect.top) * scaleY
+            ];
+        }}
+
+        canvas.addEventListener('touchend', function(e) {{
+            e.preventDefault();
+            const pos = getPos(e.changedTouches[0] ? {{touches: e.changedTouches}} : e);
+            puntos.push(pos);
+            dibujar();
+            enviarPuntos();
+        }}, {{passive: false}});
+
+        canvas.addEventListener('click', function(e) {{
+            const pos = getPos(e);
+            puntos.push(pos);
+            dibujar();
+            enviarPuntos();
+        }});
+
+        function deshacer() {{
+            if (puntos.length > 0) {{
+                puntos.pop();
+                dibujar();
+                enviarPuntos();
+            }}
+        }}
+
+        function enviarPuntos() {{
+            const data = JSON.stringify(puntos);
+            window.parent.postMessage({{type: 'puntos_canvas', puntos: data}}, '*');
+        }}
+    </script>
+    """
+    st.components.v1.html(html, height=700, scrolling=True)
+
 st.title("🏗️ AI-Count: Auditoría de Andamios")
 st.markdown("Sistema de auditoría logística para contar piezas de andamiaje desde el celular.")
 
 if "conteo_asistido" not in st.session_state:
     st.session_state.conteo_asistido = 0
+if "puntos_horizontal" not in st.session_state:
+    st.session_state.puntos_horizontal = []
 if "analysis" not in st.session_state:
     st.session_state.analysis = {}
 
@@ -122,9 +218,8 @@ if uploaded_file is not None:
             st.image(st.session_state.analysis["annotated_img"],
                      caption=f"Detectados: {st.session_state.analysis['total']} tubos",
                      use_column_width=True)
-            st.write(f"**Conteo automático:** {st.session_state.analysis['total']} piezas")
             correccion = st.number_input(
-                "¿Corregir conteo manualmente?",
+                "Corregir conteo si es necesario:",
                 min_value=0,
                 value=st.session_state.analysis["total"],
                 step=1
@@ -132,29 +227,36 @@ if uploaded_file is not None:
             st.session_state.analysis["total"] = correccion
 
     elif tipo == "Horizontales":
-        st.image(file_bytes, caption="Foto cargada", use_column_width=True)
-        st.markdown("### Conteo asistido — toca los botones para contar")
-        col1, col2, col3 = st.columns(3)
+        st.markdown("### Toca cada horizontal en la foto para marcarlo")
+        st.caption("Cada toque agrega un punto rojo. Usa el botón Deshacer si te equivocas.")
+
+        if st.button("🔄 Limpiar todos los puntos"):
+            st.session_state.puntos_horizontal = []
+
+        mostrar_canvas_tactil(file_bytes, st.session_state.puntos_horizontal)
+
+        total_horizontal = len(st.session_state.puntos_horizontal)
+        st.markdown(f"## Total marcados: **{total_horizontal}**")
+
+        col1, col2 = st.columns(2)
         with col1:
-            if st.button("➕ Sumar 1"):
+            if st.button("➕ Sumar 1 manualmente"):
                 st.session_state.conteo_asistido += 1
         with col2:
-            if st.button("➖ Restar 1") and st.session_state.conteo_asistido > 0:
-                st.session_state.conteo_asistido -= 1
-        with col3:
-            if st.button("🔄 Reiniciar"):
-                st.session_state.conteo_asistido = 0
-        st.markdown(f"## Conteo actual: **{st.session_state.conteo_asistido}**")
+            if st.button("➖ Restar 1"):
+                if st.session_state.conteo_asistido > 0:
+                    st.session_state.conteo_asistido -= 1
 
-        if st.session_state.conteo_asistido > 0:
+        total_final = total_horizontal + st.session_state.conteo_asistido
+        if total_final > 0:
             if st.button("Confirmar conteo de Horizontales"):
                 st.session_state.analysis = {
                     "tipo_material": "Horizontales",
                     "annotated_img": Image.open(io.BytesIO(file_bytes)),
-                    "total": st.session_state.conteo_asistido,
+                    "total": total_final,
                     "file_bytes": file_bytes,
                 }
-                st.success(f"Conteo confirmado: {st.session_state.conteo_asistido} horizontales.")
+                st.success(f"Conteo confirmado: {total_final} horizontales.")
 
 if st.session_state.analysis:
     analysis = st.session_state.analysis
@@ -181,6 +283,7 @@ if st.session_state.analysis:
             if photo_link:
                 st.markdown(f"[Ver foto en Drive]({photo_link})")
             st.session_state.analysis = {}
+            st.session_state.puntos_horizontal = []
             st.session_state.conteo_asistido = 0
         except Exception as exc:
             st.error(f"No se pudo guardar: {exc}")
