@@ -71,8 +71,9 @@ def detectar_verticales(image_bytes):
     gris = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
     gris = cv2.GaussianBlur(gris, (9, 9), 2)
 
-    radio_min = int(min(alto, ancho) * 0.04)
-    radio_max = int(min(alto, ancho) * 0.12)
+    # Fix 1: radio_min más grande para ignorar rosetas
+    radio_min = int(min(alto, ancho) * 0.05)
+    radio_max = int(min(alto, ancho) * 0.13)
 
     circulos = cv2.HoughCircles(
         gris,
@@ -93,8 +94,20 @@ def detectar_verticales(image_bytes):
         for (x, y, r) in circulos:
             y1, y2 = max(0, y - r//2), min(alto, y + r//2)
             x1, x2 = max(0, x - r//2), min(ancho, x + r//2)
-            region = gris[y1:y2, x1:x2]
-            if region.size > 0 and np.mean(region) < 140:
+            centro = gris[y1:y2, x1:x2]
+
+            # Fix 2: umbral de oscuridad más permisivo (165)
+            if centro.size == 0:
+                continue
+            brillo_centro = np.mean(centro)
+
+            # Fix 3: comparar centro vs borde — tubo tiene centro oscuro y borde más claro
+            yr1, yr2 = max(0, y - r), min(alto, y + r)
+            xr1, xr2 = max(0, x - r), min(ancho, x + r)
+            borde = gris[yr1:yr2, xr1:xr2]
+            brillo_borde = np.mean(borde) if borde.size > 0 else brillo_centro
+
+            if brillo_centro < 165 and brillo_centro < brillo_borde * 0.85:
                 detecciones.append((x, y, r))
 
     total = len(detecciones)
@@ -108,7 +121,7 @@ def detectar_verticales(image_bytes):
         cv2.line(resultado_np, (x - tam_cruz, y), (x + tam_cruz, y), (0, 0, 0), grosor)
         cv2.line(resultado_np, (x, y - tam_cruz), (x, y + tam_cruz), (0, 0, 0), grosor)
 
-        # Número rojo con sombra blanca para legibilidad
+        # Número rojo con sombra blanca
         font_scale = max(0.6, r / 25)
         font_thickness = max(2, r // 12)
         text = str(numero)
@@ -122,18 +135,26 @@ def detectar_verticales(image_bytes):
 
     return Image.fromarray(resultado_np), total
 
-def generar_imagen_numerada(image_bytes, puntos, max_width=360):
+def preparar_imagen_canvas(image_bytes, max_width=360):
     img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
     w, h = img.size
     if w > max_width:
         ratio = max_width / w
         img = img.resize((max_width, int(h * ratio)), Image.LANCZOS)
-        puntos = [(int(p[0]), int(p[1])) for p in puntos]
+    return img
+
+def generar_imagen_numerada(image_bytes, puntos, max_width=360):
+    img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    w, h = img.size
+    escala = 1.0
+    if w > max_width:
+        escala = max_width / w
+        img = img.resize((max_width, int(h * escala)), Image.LANCZOS)
 
     img_np = np.array(img)
     for idx, (px, py) in enumerate(puntos):
         numero = idx + 1
-        radio = max(15, min(w, h) // 20)
+        radio = max(15, min(img_np.shape[1], img_np.shape[0]) // 20)
         cv2.circle(img_np, (px, py), radio, (220, 0, 0), -1)
         cv2.circle(img_np, (px, py), radio, (255, 255, 255), 2)
         font_scale = max(0.4, radio / 20)
@@ -143,14 +164,6 @@ def generar_imagen_numerada(image_bytes, puntos, max_width=360):
         cv2.putText(img_np, text, (px - tw//2, py + th//2),
                     cv2.FONT_HERSHEY_SIMPLEX, font_scale, (255, 255, 255), thickness, cv2.LINE_AA)
     return Image.fromarray(img_np)
-
-def preparar_imagen_canvas(image_bytes, max_width=360):
-    img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-    w, h = img.size
-    if w > max_width:
-        ratio = max_width / w
-        img = img.resize((max_width, int(h * ratio)), Image.LANCZOS)
-    return img
 
 # ── ESTADO ──────────────────────────────────────────────────────────────────
 if "analysis" not in st.session_state:
@@ -233,6 +246,7 @@ if uploaded_file is not None:
         st.markdown("### Toca cada cabezal en la foto")
         st.caption("Cada toque marca un círculo. El conteo sube automáticamente.")
 
+        # Fix error: convertir imagen correctamente para st_canvas
         img_canvas = preparar_imagen_canvas(file_bytes)
         cw, ch = img_canvas.size
 
@@ -254,13 +268,15 @@ if uploaded_file is not None:
         if canvas_result.json_data is not None:
             objects = canvas_result.json_data.get("objects", [])
             total_h = len(objects)
-            puntos = [(int(obj.get("left", 0) + 18), int(obj.get("top", 0) + 18))
-                      for obj in objects]
+            puntos = [
+                (int(obj.get("left", 0) + 18), int(obj.get("top", 0) + 18))
+                for obj in objects
+            ]
 
         if total_h == 0:
             st.info("Toca los cabezales en la foto para comenzar el conteo.")
         elif total_h < 40:
-            st.warning(f"Total marcados: **{total_h}** — por debajo del mínimo esperado (40).")
+            st.warning(f"Total marcados: **{total_h}**")
         elif total_h > 212:
             st.warning(f"Total marcados: **{total_h}** — por encima del máximo (212). Verifica.")
         else:
