@@ -1,5 +1,5 @@
 import streamlit as st
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 import numpy as np
 import cv2
 import gspread
@@ -10,6 +10,7 @@ import datetime
 import io
 import os
 import base64
+import math
 
 SHEET_ID = "1ew4P9dsQWrINTCfEc5bg-qlcUmvSfZDPXUEq6hFxlOg"
 DRIVE_FOLDER_ID = "1K1Q3d4KV_b4RzhQsFVxN_cf9u8F0Wuae"
@@ -63,14 +64,26 @@ def upload_image_to_drive(file_bytes, filename, folder_id, drive_service, mime_t
         st.error(f"Error al subir la foto a Drive: {e}")
     return ""
 
+def calcular_grid(total):
+    if total <= 20:
+        return 2, 2
+    elif total <= 50:
+        return 3, 3
+    elif total <= 80:
+        return 4, 4
+    else:
+        return 5, 5
+
 def detectar_verticales(image_bytes):
     img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
     img_np = np.array(img)
     gris = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
     gris = cv2.GaussianBlur(gris, (9, 9), 2)
     alto, ancho = gris.shape
-    radio_min = int(min(alto, ancho) * 0.025)
-    radio_max = int(min(alto, ancho) * 0.09)
+
+    radio_min = int(min(alto, ancho) * 0.03)
+    radio_max = int(min(alto, ancho) * 0.10)
+
     circulos = cv2.HoughCircles(
         gris,
         cv2.HOUGH_GRADIENT,
@@ -81,16 +94,48 @@ def detectar_verticales(image_bytes):
         minRadius=radio_min,
         maxRadius=radio_max,
     )
+
     resultado = img.copy()
     draw = ImageDraw.Draw(resultado)
     total = 0
+    detecciones = []
+
     if circulos is not None:
         circulos = np.round(circulos[0, :]).astype("int")
         for (x, y, r) in circulos:
-            draw.ellipse([x - r, y - r, x + r, y + r], outline="red", width=3)
-            draw.ellipse([x - 4, y - 4, x + 4, y + 4], fill="red")
-            total += 1
-    return resultado, total
+            detecciones.append((x, y, r))
+        total = len(detecciones)
+
+    filas, cols = calcular_grid(total)
+
+    # Dibujar cuadrícula adaptativa
+    for i in range(1, filas):
+        y_linea = int(alto * i / filas)
+        draw.line([(0, y_linea), (ancho, y_linea)], fill=(0, 255, 0), width=3)
+    for j in range(1, cols):
+        x_linea = int(ancho * j / cols)
+        draw.line([(x_linea, 0), (x_linea, alto)], fill=(0, 255, 0), width=3)
+
+    # Dibujar cruz y número dentro de cada hoyo
+    for idx, (x, y, r) in enumerate(detecciones):
+        numero = idx + 1
+        tam_cruz = int(r * 0.7)
+
+        # Cruz roja dentro del hoyo
+        draw.line([(x - tam_cruz, y), (x + tam_cruz, y)], fill=(255, 0, 0), width=3)
+        draw.line([(x, y - tam_cruz), (x, y + tam_cruz)], fill=(255, 0, 0), width=3)
+
+        # Círculo del hoyo
+        draw.ellipse([x - r, y - r, x + r, y + r], outline=(255, 0, 0), width=2)
+
+        # Número encima de la cruz
+        tam_texto = max(r // 2, 12)
+        draw.ellipse([x - tam_texto, y - tam_texto, x + tam_texto, y + tam_texto],
+                     fill=(255, 0, 0))
+        draw.text((x - tam_texto // 2, y - tam_texto // 2),
+                  str(numero), fill=(255, 255, 255))
+
+    return resultado, total, filas, cols
 
 def imagen_a_base64(image_bytes):
     return base64.b64encode(image_bytes).decode("utf-8")
@@ -101,10 +146,10 @@ def mostrar_canvas_tactil(image_bytes, puntos):
     html = f"""
     <div style="position:relative; display:inline-block; width:100%;">
         <canvas id="canvas" style="width:100%; touch-action:none; border:2px solid #ccc;"></canvas>
-        <div style="margin-top:8px; font-size:18px; font-weight:bold; color:#e00;">
+        <div style="margin-top:8px; font-size:22px; font-weight:bold; color:#e00;">
             Marcados: <span id="contador">{len(puntos)}</span>
         </div>
-        <button onclick="deshacer()" style="margin-top:8px; padding:10px 20px; font-size:16px; background:#e00; color:white; border:none; border-radius:8px;">
+        <button onclick="deshacer()" style="margin-top:8px; padding:12px 24px; font-size:18px; background:#e00; color:white; border:none; border-radius:8px;">
             ↩ Deshacer último
         </button>
     </div>
@@ -113,8 +158,6 @@ def mostrar_canvas_tactil(image_bytes, puntos):
         const ctx = canvas.getContext('2d');
         const img = new Image();
         let puntos = {puntos_js};
-        let escalaX = 1;
-        let escalaY = 1;
 
         img.onload = function() {{
             canvas.width = img.naturalWidth;
@@ -126,14 +169,19 @@ def mostrar_canvas_tactil(image_bytes, puntos):
         function dibujar() {{
             ctx.clearRect(0, 0, canvas.width, canvas.height);
             ctx.drawImage(img, 0, 0);
-            puntos.forEach(function(p) {{
+            puntos.forEach(function(p, i) {{
                 ctx.beginPath();
-                ctx.arc(p[0], p[1], 18, 0, 2 * Math.PI);
-                ctx.fillStyle = 'rgba(255,0,0,0.7)';
+                ctx.arc(p[0], p[1], 22, 0, 2 * Math.PI);
+                ctx.fillStyle = 'rgba(255,0,0,0.75)';
                 ctx.fill();
                 ctx.strokeStyle = 'white';
                 ctx.lineWidth = 3;
                 ctx.stroke();
+                ctx.fillStyle = 'white';
+                ctx.font = 'bold 20px Arial';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(i + 1, p[0], p[1]);
             }});
             document.getElementById('contador').innerText = puntos.length;
         }}
@@ -156,7 +204,14 @@ def mostrar_canvas_tactil(image_bytes, puntos):
 
         canvas.addEventListener('touchend', function(e) {{
             e.preventDefault();
-            const pos = getPos(e.changedTouches[0] ? {{touches: e.changedTouches}} : e);
+            const touch = e.changedTouches[0];
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            const pos = [
+                (touch.clientX - rect.left) * scaleX,
+                (touch.clientY - rect.top) * scaleY
+            ];
             puntos.push(pos);
             dibujar();
             enviarPuntos();
@@ -178,12 +233,15 @@ def mostrar_canvas_tactil(image_bytes, puntos):
         }}
 
         function enviarPuntos() {{
-            const data = JSON.stringify(puntos);
-            window.parent.postMessage({{type: 'puntos_canvas', puntos: data}}, '*');
+            const data = JSON.stringify({{count: puntos.length}});
+            window.parent.postMessage({{type: 'streamlit:setComponentValue', value: puntos.length}}, '*');
         }}
     </script>
     """
-    st.components.v1.html(html, height=700, scrolling=True)
+    resultado = st.components.v1.html(html, height=750, scrolling=True)
+    return resultado
+
+# ── UI ──────────────────────────────────────────────────────────────────────
 
 st.title("🏗️ AI-Count: Auditoría de Andamios")
 st.markdown("Sistema de auditoría logística para contar piezas de andamiaje desde el celular.")
@@ -205,14 +263,19 @@ if uploaded_file is not None:
     if tipo == "Verticales":
         if st.button("Contar Verticales automáticamente"):
             with st.spinner("Detectando tubos..."):
-                resultado_img, total = detectar_verticales(file_bytes)
+                resultado_img, total, filas, cols = detectar_verticales(file_bytes)
                 st.session_state.analysis = {
                     "tipo_material": "Verticales",
                     "annotated_img": resultado_img,
                     "total": total,
                     "file_bytes": file_bytes,
                 }
-            st.success(f"Se detectaron {total} tubos verticales.")
+            if total < 20:
+                st.warning(f"Se detectaron {total} tubos — por debajo del mínimo esperado (20). Verifica la foto.")
+            elif total > 104:
+                st.warning(f"Se detectaron {total} tubos — por encima del máximo esperado (104). Verifica la foto.")
+            else:
+                st.success(f"Se detectaron {total} tubos verticales. Cuadrícula {filas}x{cols}.")
 
         if st.session_state.analysis.get("tipo_material") == "Verticales":
             st.image(st.session_state.analysis["annotated_img"],
@@ -227,27 +290,36 @@ if uploaded_file is not None:
             st.session_state.analysis["total"] = correccion
 
     elif tipo == "Horizontales":
-        st.markdown("### Toca cada horizontal en la foto para marcarlo")
-        st.caption("Cada toque agrega un punto rojo. Usa el botón Deshacer si te equivocas.")
+        st.markdown("### Toca cada cabezal en la foto para marcarlo")
+        st.caption("Cada toque agrega un número rojo. Usa Deshacer si te equivocas.")
 
         if st.button("🔄 Limpiar todos los puntos"):
             st.session_state.puntos_horizontal = []
+            st.rerun()
 
         mostrar_canvas_tactil(file_bytes, st.session_state.puntos_horizontal)
 
-        total_horizontal = len(st.session_state.puntos_horizontal)
-        st.markdown(f"## Total marcados: **{total_horizontal}**")
+        total_canvas = len(st.session_state.puntos_horizontal)
 
         col1, col2 = st.columns(2)
         with col1:
-            if st.button("➕ Sumar 1 manualmente"):
+            if st.button("➕ Sumar 1"):
                 st.session_state.conteo_asistido += 1
+                st.rerun()
         with col2:
-            if st.button("➖ Restar 1"):
-                if st.session_state.conteo_asistido > 0:
-                    st.session_state.conteo_asistido -= 1
+            if st.button("➖ Restar 1") and st.session_state.conteo_asistido > 0:
+                st.session_state.conteo_asistido -= 1
+                st.rerun()
 
-        total_final = total_horizontal + st.session_state.conteo_asistido
+        total_final = total_canvas + st.session_state.conteo_asistido
+
+        if total_final < 40:
+            st.info(f"Total marcados: **{total_final}** — por debajo del mínimo esperado (40).")
+        elif total_final > 212:
+            st.warning(f"Total marcados: **{total_final}** — por encima del máximo (212). Verifica.")
+        else:
+            st.success(f"Total marcados: **{total_final}**")
+
         if total_final > 0:
             if st.button("Confirmar conteo de Horizontales"):
                 st.session_state.analysis = {
