@@ -10,7 +10,7 @@ from streamlit_image_coordinates import streamlit_image_coordinates
 import datetime
 import io
 
-SHEET_ID        = "1ew4P9dsQWrINTCfEc5bg-qlcUmvSfZDPXUEq6hFxlOg"
+SHEET_ID        = "1tVGss0qpGZwzmTpWd_jdBqIczpQyUkibwa209Gq2t7Y"
 DRIVE_FOLDER_ID = "1njn6Hp3qoaw3kYqkErseReHhA7mrvPjA"
 
 PATENTES    = ["HSFC-61","HSFC-62","LPXW-25","LPXW-87","TKXD-17","LPXW-12","THXX-18"]
@@ -200,8 +200,8 @@ def cargar_imagen(fuente):
     img = ImageOps.exif_transpose(img)
     img = img.convert("RGB")
     w, h = img.size
-    if max(w, h) > 900:
-        scale = 900 / max(w, h)
+    if max(w, h) > 500:
+        scale = 500 / max(w, h)
         img   = img.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
     return img
 
@@ -258,28 +258,18 @@ with tab_auditoria:
         unsafe_allow_html=True
     )
 
-    op_galeria, op_camara = st.tabs(["📁 Desde galería", "📷 Tomar foto ahora"])
     img_nueva = None
-
-    with op_galeria:
-        archivo = st.file_uploader(
-            "Selecciona una foto", type=["jpg","jpeg","png","webp"],
-            label_visibility="collapsed"
-        )
-        if archivo:
-            try:
-                img_nueva = cargar_imagen(archivo)
-            except Exception as e:
-                st.error("No se pudo abrir la imagen: " + str(e))
-
-    with op_camara:
-        st.info("Toca el botón para abrir la cámara y tomar la foto directamente.")
-        foto_camara = st.camera_input("Tomar foto", label_visibility="collapsed")
-        if foto_camara:
-            try:
-                img_nueva = cargar_imagen(foto_camara)
-            except Exception as e:
-                st.error("No se pudo procesar la foto: " + str(e))
+    archivo = st.file_uploader(
+        "Selecciona una foto o toma una desde la cámara",
+        type=["jpg","jpeg","png","webp"],
+        label_visibility="collapsed"
+    )
+    st.caption("En el celular, al tocar el botón aparecen las opciones: Cámara o Galería.")
+    if archivo:
+        try:
+            img_nueva = cargar_imagen(archivo)
+        except Exception as e:
+            st.error("No se pudo abrir la imagen: " + str(e))
 
     if img_nueva is not None and st.session_state["img_orig"] is None:
         st.session_state.update({
@@ -304,8 +294,7 @@ with tab_auditoria:
                 coord_v = streamlit_image_coordinates(
                     dibujar_puntos(st.session_state["img_orig"],
                                    st.session_state["puntos_v"], "vertical"),
-                    key="mapa_v",
-                    width=700
+                    key="mapa_v"
                 )
             with cc:
                 tv = len(st.session_state["puntos_v"])
@@ -347,8 +336,7 @@ with tab_auditoria:
                 coord_h = streamlit_image_coordinates(
                     dibujar_puntos(st.session_state["img_orig"],
                                    st.session_state["puntos_h"], "horizontal"),
-                    key="mapa_h",
-                    width=700
+                    key="mapa_h"
                 )
             with cc:
                 th_ = len(st.session_state["puntos_h"])
