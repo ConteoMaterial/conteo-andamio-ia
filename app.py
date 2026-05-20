@@ -104,7 +104,6 @@ def formato_sheets(ws, sheets_service):
     sid    = ws._properties["sheetId"]
     n_cols = len(HEADERS)
     reqs   = []
-
     reqs.append({"mergeCells": {
         "range": {"sheetId": sid, "startRowIndex": 0, "endRowIndex": 1,
                   "startColumnIndex": 0, "endColumnIndex": n_cols},
@@ -116,8 +115,7 @@ def formato_sheets(ws, sheets_service):
             "backgroundColor": {"red": 0.039, "green": 0.039, "blue": 0.059},
             "textFormat": {"bold": True, "fontSize": 14,
                            "foregroundColor": {"red": 0.0, "green": 0.831, "blue": 1.0}},
-            "horizontalAlignment": "CENTER",
-            "verticalAlignment":   "MIDDLE",
+            "horizontalAlignment": "CENTER", "verticalAlignment": "MIDDLE",
         }},
         "fields": "userEnteredFormat(backgroundColor,textFormat,horizontalAlignment,verticalAlignment)"
     }})
@@ -131,8 +129,7 @@ def formato_sheets(ws, sheets_service):
             "backgroundColor": {"red": 0.176, "green": 0.420, "blue": 0.894},
             "textFormat": {"bold": True, "fontSize": 10,
                            "foregroundColor": {"red":1,"green":1,"blue":1}},
-            "horizontalAlignment": "CENTER",
-            "verticalAlignment":   "MIDDLE",
+            "horizontalAlignment": "CENTER", "verticalAlignment": "MIDDLE",
         }},
         "fields": "userEnteredFormat(backgroundColor,textFormat,horizontalAlignment,verticalAlignment)"
     }})
@@ -145,24 +142,21 @@ def formato_sheets(ws, sheets_service):
         "fields": "gridProperties.frozenRowCount"
     }})
     reqs.append({"addConditionalFormatRule": {"rule": {
-        "ranges": [{"sheetId": sid, "startRowIndex": 2,
-                    "startColumnIndex": 11, "endColumnIndex": 12}],
+        "ranges": [{"sheetId": sid, "startRowIndex": 2, "startColumnIndex": 11, "endColumnIndex": 12}],
         "booleanRule": {
             "condition": {"type": "TEXT_EQ", "values": [{"userEnteredValue": "Conforme"}]},
             "format": {"backgroundColor": {"red": 0.0, "green": 0.898, "blue": 0.627}}
         }
     }, "index": 0}})
     reqs.append({"addConditionalFormatRule": {"rule": {
-        "ranges": [{"sheetId": sid, "startRowIndex": 2,
-                    "startColumnIndex": 11, "endColumnIndex": 12}],
+        "ranges": [{"sheetId": sid, "startRowIndex": 2, "startColumnIndex": 11, "endColumnIndex": 12}],
         "booleanRule": {
             "condition": {"type": "TEXT_EQ", "values": [{"userEnteredValue": "No Conforme"}]},
             "format": {"backgroundColor": {"red": 1.0, "green": 0.239, "blue": 0.353}}
         }
     }, "index": 1}})
     reqs.append({"addConditionalFormatRule": {"rule": {
-        "ranges": [{"sheetId": sid, "startRowIndex": 2,
-                    "startColumnIndex": 11, "endColumnIndex": 12}],
+        "ranges": [{"sheetId": sid, "startRowIndex": 2, "startColumnIndex": 11, "endColumnIndex": 12}],
         "booleanRule": {
             "condition": {"type": "TEXT_EQ", "values": [{"userEnteredValue": "Revision"}]},
             "format": {"backgroundColor": {"red": 1.0, "green": 0.690, "blue": 0.125}}
@@ -180,11 +174,9 @@ def formato_sheets(ws, sheets_service):
     anchos = [110,100,75,80,90,130,120,110,120,120,85,110,160,130]
     for i, w in enumerate(anchos):
         reqs.append({"updateDimensionProperties": {
-            "range": {"sheetId": sid, "dimension": "COLUMNS",
-                      "startIndex": i, "endIndex": i+1},
+            "range": {"sheetId": sid, "dimension": "COLUMNS", "startIndex": i, "endIndex": i+1},
             "properties": {"pixelSize": w}, "fields": "pixelSize"
         }})
-
     for req in reqs:
         try:
             sheets_service.spreadsheets().batchUpdate(
@@ -282,6 +274,11 @@ def contar_material(tipo):
     desc   = "tubo vertical → cruz negra + número rojo" if tipo == "vertical" \
              else "horizontal/cabezal → círculo rojo + número blanco"
 
+    # Tracker de última coordenada procesada
+    key_last = "_lc_" + tipo[0]
+    if key_last not in st.session_state:
+        st.session_state[key_last] = None
+
     # ── Contador arriba ──────────────────────────────────────────────────────
     total = len(st.session_state[key_p])
     st.markdown(
@@ -296,8 +293,10 @@ def contar_material(tipo):
     if c1.button("↩ Deshacer", key="undo_" + tipo[0]):
         if st.session_state[key_p]:
             st.session_state[key_p].pop()
+        st.session_state[key_last] = "__undo__"
     if c2.button("🗑 Limpiar todo", key="clear_" + tipo[0]):
         st.session_state[key_p] = []
+        st.session_state[key_last] = "__undo__"
 
     decl = st.number_input(
         "Cantidad declarada (" + label + ")",
@@ -318,17 +317,21 @@ def contar_material(tipo):
         unsafe_allow_html=True
     )
 
-    # ── Imagen abajo (sin salto de pantalla al tocar) ─────────────────────────
+    # ── Imagen con KEY ESTÁTICO (sin scroll al tocar) ─────────────────────────
     img_anotada = dibujar_puntos(
         st.session_state["img_orig"], st.session_state[key_p], tipo
     )
-    coord = streamlit_image_coordinates(img_anotada, key=key_m + "_" + str(len(st.session_state[key_p])))
+    coord = streamlit_image_coordinates(img_anotada, key=key_m)
 
     # Registrar tap
     if coord:
-        x, y = int(coord["x"]), int(coord["y"])
-        if not st.session_state[key_p] or st.session_state[key_p][-1] != (x, y):
-            st.session_state[key_p].append((x, y))
+        ct   = (int(coord["x"]), int(coord["y"]))
+        last = st.session_state[key_last]
+        if last == "__undo__":
+            st.session_state[key_last] = ct   # memoriza sin agregar
+        elif ct != last:
+            st.session_state[key_last] = ct
+            st.session_state[key_p].append(ct)
             st.rerun()
 
 # ─── SESSION STATE ────────────────────────────────────────────────────────────
@@ -336,6 +339,7 @@ for k, v in {
     "puntos_v": [], "puntos_h": [], "img_orig": None, "guardado": False,
     "s_patente": PATENTES[0], "s_chofer": CHOFERES[0], "s_turno": TURNOS[0],
     "s_tipo_mov": MOVIMIENTOS[0], "s_observaciones": "", "upload_counter": 0,
+    "_lc_v": None, "_lc_h": None,
 }.items():
     if k not in st.session_state:
         st.session_state[k] = v
@@ -471,6 +475,7 @@ with tab_auditoria:
                     "puntos_v": [], "puntos_h": [],
                     "img_orig": None, "guardado": False,
                     "upload_counter": st.session_state.get("upload_counter", 0) + 1,
+                    "_lc_v": None, "_lc_h": None,
                 })
                 st.rerun()
 
