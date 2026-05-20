@@ -5,20 +5,22 @@ import cv2
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from googleapiclient.discovery import build
-from googleapiclient.http import MediaIoBaseUpload
 from streamlit_image_coordinates import streamlit_image_coordinates
 import datetime
 import io
 
-SHEET_ID        = "1tVGss0qpGZwzmTpWd_jdBqIczpQyUkibwa209Gq2t7Y"
-DRIVE_FOLDER_ID = "1njn6Hp3qoaw3kYqkErseReHhA7mrvPjA"
-
+# ─── CONFIGURACIÓN ────────────────────────────────────────────────────────────
+SHEET_ID    = "1tVGss0qpGZwzmTpWd_jdBqIczpQyUkibwa209Gq2t7Y"
 PATENTES    = ["HSFC-61","HSFC-62","LPXW-25","LPXW-87","TKXD-17","LPXW-12","THXX-18"]
 CHOFERES    = ["Juan Perez","Daniel Ramirez","Hugo Diaz","Cristian Olmos",
                "Victoria Garcia","Luis Ayala","Miguel Herrera"]
 TURNOS      = ["Mañana","Tarde","Noche"]
 MOVIMIENTOS = ["Salida","Devolución"]
+HEADERS     = ["N° Auditoria","Fecha","Hora","Turno","Patente","Chofer",
+               "Tipo Movimiento","Material","Cantidad Declarada","Cantidad Contada",
+               "Diferencia","Estado","Observaciones","Auditado Por"]
 
+# ─── COLORES ──────────────────────────────────────────────────────────────────
 COL_NEGRO    = "#0A0A0F"
 COL_AZUL     = "#2D6BE4"
 COL_CIAN     = "#00D4FF"
@@ -28,7 +30,9 @@ COL_VERDE    = "#00E5A0"
 COL_ROJO     = "#FF3D5A"
 COL_AMARILLO = "#FFB020"
 
-st.set_page_config(page_title="ARMATEC · Auditoría Andamios", layout="wide", page_icon="🏗️")
+# ─── CONFIG PÁGINA ────────────────────────────────────────────────────────────
+st.set_page_config(page_title="ARMATEC · Auditoría Andamios",
+                   layout="wide", page_icon="🏗️")
 
 st.markdown(f"""
 <style>
@@ -50,14 +54,14 @@ st.markdown(f"""
   .stTabs [aria-selected="true"] {{ background-color: {COL_AZUL}; color: white; }}
   .metric-card {{
     background: {COL_CARBONO}; border: 1px solid {COL_AZUL}44;
-    border-radius: 12px; padding: 18px 22px; text-align: center;
+    border-radius: 12px; padding: 14px 18px; text-align: center; margin: 6px 0;
   }}
-  .metric-label {{ font-size:0.72rem; color:#8899BB; text-transform:uppercase; letter-spacing:0.08em; margin-bottom:6px; }}
-  .metric-value {{ font-size:2rem; font-weight:700; color:{COL_CIAN}; }}
-  .metric-sub   {{ font-size:0.78rem; color:#8899BB; margin-top:4px; }}
-  .badge-conforme {{ background:{COL_VERDE}22; color:{COL_VERDE}; border:1px solid {COL_VERDE}66; border-radius:20px; padding:2px 12px; font-size:0.78rem; font-weight:600; }}
-  .badge-alerta   {{ background:{COL_ROJO}22;  color:{COL_ROJO};  border:1px solid {COL_ROJO}66;  border-radius:20px; padding:2px 12px; font-size:0.78rem; font-weight:600; }}
-  .badge-revision {{ background:{COL_AMARILLO}22; color:{COL_AMARILLO}; border:1px solid {COL_AMARILLO}66; border-radius:20px; padding:2px 12px; font-size:0.78rem; font-weight:600; }}
+  .metric-label {{ font-size:0.72rem; color:#8899BB; text-transform:uppercase; letter-spacing:0.08em; margin-bottom:4px; }}
+  .metric-value {{ font-size:2.2rem; font-weight:700; color:{COL_CIAN}; }}
+  .metric-sub   {{ font-size:0.75rem; color:#8899BB; margin-top:2px; }}
+  .badge-conforme {{ background:{COL_VERDE}22; color:{COL_VERDE}; border:1px solid {COL_VERDE}66; border-radius:20px; padding:3px 14px; font-size:0.82rem; font-weight:600; }}
+  .badge-alerta   {{ background:{COL_ROJO}22;  color:{COL_ROJO};  border:1px solid {COL_ROJO}66;  border-radius:20px; padding:3px 14px; font-size:0.82rem; font-weight:600; }}
+  .badge-revision {{ background:{COL_AMARILLO}22; color:{COL_AMARILLO}; border:1px solid {COL_AMARILLO}66; border-radius:20px; padding:3px 14px; font-size:0.82rem; font-weight:600; }}
   .armatec-header {{
     background: linear-gradient(135deg, {COL_CARBONO}, {COL_NEGRO});
     border: 1px solid {COL_AZUL}55; border-radius: 12px;
@@ -73,13 +77,14 @@ st.markdown(f"""
   .audit-row {{
     background: {COL_CARBONO}; border: 1px solid {COL_AZUL}22;
     border-radius: 8px; padding: 10px 16px; margin-bottom: 6px;
-    display: flex; align-items: center; gap: 12px; font-size: 0.82rem;
+    display: flex; align-items: center; gap: 12px; font-size: 0.82rem; flex-wrap: wrap;
   }}
   .audit-row-label {{ color: #8899BB; min-width: 90px; }}
   .audit-row-val   {{ color: {COL_PIZARRA}; font-weight: 600; }}
 </style>
 """, unsafe_allow_html=True)
 
+# ─── GOOGLE AUTH ──────────────────────────────────────────────────────────────
 @st.cache_resource
 def get_clients():
     creds_dict = dict(st.secrets["gcp_service_account"])
@@ -90,74 +95,112 @@ def get_clients():
     ]
     creds  = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
     gc     = gspread.authorize(creds)
-    drive  = build("drive",  "v3", credentials=creds)
     sheets = build("sheets", "v4", credentials=creds)
-    return gc, drive, sheets
+    return gc, sheets
 
+# ─── FORMATO PROFESIONAL SHEETS ───────────────────────────────────────────────
 def formato_sheets(ws, sheets_service):
-    sid = ws._properties["sheetId"]
-    requests = [
-        {"repeatCell": {
-            "range": {"sheetId": sid, "startRowIndex": 0, "endRowIndex": 1},
-            "cell": {"userEnteredFormat": {
-                "backgroundColor":     {"red": 0.176, "green": 0.420, "blue": 0.894},
-                "textFormat":          {"bold": True, "foregroundColor": {"red":1,"green":1,"blue":1}, "fontSize": 10},
-                "horizontalAlignment": "CENTER",
-                "verticalAlignment":   "MIDDLE",
-            }},
-            "fields": "userEnteredFormat(backgroundColor,textFormat,horizontalAlignment,verticalAlignment)"
+    sid    = ws._properties["sheetId"]
+    n_cols = len(HEADERS)
+    reqs   = []
+
+    reqs.append({"mergeCells": {
+        "range": {"sheetId": sid, "startRowIndex": 0, "endRowIndex": 1,
+                  "startColumnIndex": 0, "endColumnIndex": n_cols},
+        "mergeType": "MERGE_ALL"
+    }})
+    reqs.append({"repeatCell": {
+        "range": {"sheetId": sid, "startRowIndex": 0, "endRowIndex": 1},
+        "cell": {"userEnteredFormat": {
+            "backgroundColor": {"red": 0.039, "green": 0.039, "blue": 0.059},
+            "textFormat": {"bold": True, "fontSize": 14,
+                           "foregroundColor": {"red": 0.0, "green": 0.831, "blue": 1.0}},
+            "horizontalAlignment": "CENTER",
+            "verticalAlignment":   "MIDDLE",
         }},
-        {"updateDimensionProperties": {
-            "range": {"sheetId": sid, "dimension": "ROWS", "startIndex": 0, "endIndex": 1},
-            "properties": {"pixelSize": 32}, "fields": "pixelSize"
+        "fields": "userEnteredFormat(backgroundColor,textFormat,horizontalAlignment,verticalAlignment)"
+    }})
+    reqs.append({"updateDimensionProperties": {
+        "range": {"sheetId": sid, "dimension": "ROWS", "startIndex": 0, "endIndex": 1},
+        "properties": {"pixelSize": 44}, "fields": "pixelSize"
+    }})
+    reqs.append({"repeatCell": {
+        "range": {"sheetId": sid, "startRowIndex": 1, "endRowIndex": 2},
+        "cell": {"userEnteredFormat": {
+            "backgroundColor": {"red": 0.176, "green": 0.420, "blue": 0.894},
+            "textFormat": {"bold": True, "fontSize": 10,
+                           "foregroundColor": {"red":1,"green":1,"blue":1}},
+            "horizontalAlignment": "CENTER",
+            "verticalAlignment":   "MIDDLE",
         }},
-        {"updateSheetProperties": {
-            "properties": {"sheetId": sid, "gridProperties": {"frozenRowCount": 1}},
-            "fields": "gridProperties.frozenRowCount"
-        }},
-        {"addConditionalFormatRule": {"rule": {
-            "ranges": [{"sheetId": sid, "startRowIndex": 1, "startColumnIndex": 11, "endColumnIndex": 12}],
-            "booleanRule": {
-                "condition": {"type": "TEXT_EQ", "values": [{"userEnteredValue": "Conforme"}]},
-                "format": {"backgroundColor": {"red": 0.0, "green": 0.898, "blue": 0.627}}
-            }
-        }, "index": 0}},
-        {"addConditionalFormatRule": {"rule": {
-            "ranges": [{"sheetId": sid, "startRowIndex": 1, "startColumnIndex": 11, "endColumnIndex": 12}],
-            "booleanRule": {
-                "condition": {"type": "TEXT_EQ", "values": [{"userEnteredValue": "No Conforme"}]},
-                "format": {"backgroundColor": {"red": 1.0, "green": 0.239, "blue": 0.353}}
-            }
-        }, "index": 1}},
-        {"addConditionalFormatRule": {"rule": {
-            "ranges": [{"sheetId": sid, "startRowIndex": 1, "startColumnIndex": 11, "endColumnIndex": 12}],
-            "booleanRule": {
-                "condition": {"type": "TEXT_EQ", "values": [{"userEnteredValue": "Revision"}]},
-                "format": {"backgroundColor": {"red": 1.0, "green": 0.690, "blue": 0.125}}
-            }
-        }, "index": 2}},
-    ]
-    anchos = [110,100,80,80,90,130,120,110,120,120,90,110,160,130,220]
+        "fields": "userEnteredFormat(backgroundColor,textFormat,horizontalAlignment,verticalAlignment)"
+    }})
+    reqs.append({"updateDimensionProperties": {
+        "range": {"sheetId": sid, "dimension": "ROWS", "startIndex": 1, "endIndex": 2},
+        "properties": {"pixelSize": 32}, "fields": "pixelSize"
+    }})
+    reqs.append({"updateSheetProperties": {
+        "properties": {"sheetId": sid, "gridProperties": {"frozenRowCount": 2}},
+        "fields": "gridProperties.frozenRowCount"
+    }})
+    reqs.append({"addConditionalFormatRule": {"rule": {
+        "ranges": [{"sheetId": sid, "startRowIndex": 2,
+                    "startColumnIndex": 11, "endColumnIndex": 12}],
+        "booleanRule": {
+            "condition": {"type": "TEXT_EQ", "values": [{"userEnteredValue": "Conforme"}]},
+            "format": {"backgroundColor": {"red": 0.0, "green": 0.898, "blue": 0.627}}
+        }
+    }, "index": 0}})
+    reqs.append({"addConditionalFormatRule": {"rule": {
+        "ranges": [{"sheetId": sid, "startRowIndex": 2,
+                    "startColumnIndex": 11, "endColumnIndex": 12}],
+        "booleanRule": {
+            "condition": {"type": "TEXT_EQ", "values": [{"userEnteredValue": "No Conforme"}]},
+            "format": {"backgroundColor": {"red": 1.0, "green": 0.239, "blue": 0.353}}
+        }
+    }, "index": 1}})
+    reqs.append({"addConditionalFormatRule": {"rule": {
+        "ranges": [{"sheetId": sid, "startRowIndex": 2,
+                    "startColumnIndex": 11, "endColumnIndex": 12}],
+        "booleanRule": {
+            "condition": {"type": "TEXT_EQ", "values": [{"userEnteredValue": "Revision"}]},
+            "format": {"backgroundColor": {"red": 1.0, "green": 0.690, "blue": 0.125}}
+        }
+    }, "index": 2}})
+    reqs.append({"addBanding": {"bandedRange": {
+        "range": {"sheetId": sid, "startRowIndex": 2, "endRowIndex": 1000,
+                  "startColumnIndex": 0, "endColumnIndex": n_cols},
+        "rowProperties": {
+            "headerColor":     {"red": 0.176, "green": 0.420, "blue": 0.894},
+            "firstBandColor":  {"red": 0.94, "green": 0.96, "blue": 1.0},
+            "secondBandColor": {"red": 1.0,  "green": 1.0,  "blue": 1.0},
+        }
+    }}})
+    anchos = [110,100,75,80,90,130,120,110,120,120,85,110,160,130]
     for i, w in enumerate(anchos):
-        requests.append({"updateDimensionProperties": {
-            "range": {"sheetId": sid, "dimension": "COLUMNS", "startIndex": i, "endIndex": i+1},
+        reqs.append({"updateDimensionProperties": {
+            "range": {"sheetId": sid, "dimension": "COLUMNS",
+                      "startIndex": i, "endIndex": i+1},
             "properties": {"pixelSize": w}, "fields": "pixelSize"
         }})
-    sheets_service.spreadsheets().batchUpdate(
-        spreadsheetId=SHEET_ID, body={"requests": requests}
-    ).execute()
 
+    for req in reqs:
+        try:
+            sheets_service.spreadsheets().batchUpdate(
+                spreadsheetId=SHEET_ID, body={"requests": [req]}
+            ).execute()
+        except Exception:
+            pass
+
+# ─── SHEETS CRUD ──────────────────────────────────────────────────────────────
 def get_sheet(gc, sheets_service=None):
     wb = gc.open_by_key(SHEET_ID)
     try:
         ws = wb.worksheet("Auditorias")
     except gspread.exceptions.WorksheetNotFound:
         ws = wb.add_worksheet("Auditorias", rows=1000, cols=20)
-        ws.append_row([
-            "N° Auditoria","Fecha","Hora","Turno","Patente","Chofer",
-            "Tipo Movimiento","Material","Cantidad Declarada","Cantidad Contada",
-            "Diferencia","Estado","Observaciones","Auditado Por","Link Foto"
-        ])
+        ws.update("A1", [["🏗️ ARMATEC · AUDITORÍA DE ANDAMIOS"]])
+        ws.append_row(HEADERS)
         if sheets_service:
             try:
                 formato_sheets(ws, sheets_service)
@@ -167,34 +210,35 @@ def get_sheet(gc, sheets_service=None):
 
 def get_next_audit_number(ws):
     data = ws.get_all_values()
-    if len(data) <= 1:
+    if len(data) <= 2:
         return "AUD-0001"
-    return f"AUD-{len(data):04d}"
+    return "AUD-" + str(len(data) - 1).zfill(4)
 
 def guardar_en_sheets(gc, registro):
     ws = get_sheet(gc)
     ws.append_row([
-        registro["n_auditoria"], registro["fecha"], registro["hora"],
-        registro["turno"], registro["patente"], registro["chofer"],
-        registro["tipo_movimiento"], registro["material"],
-        registro["cantidad_declarada"], registro["cantidad_contada"],
-        registro["diferencia"], registro["estado"],
-        registro["observaciones"], registro["auditado_por"], registro["link_foto"],
+        registro["n_auditoria"],    registro["fecha"],
+        registro["hora"],           registro["turno"],
+        registro["patente"],        registro["chofer"],
+        registro["tipo_movimiento"],registro["material"],
+        registro["cant_declarada"], registro["cant_contada"],
+        registro["diferencia"],     registro["estado"],
+        registro["observaciones"],  registro["auditado_por"],
     ])
 
 def cargar_historial(gc):
-    return get_sheet(gc).get_all_records()
+    ws     = get_sheet(gc)
+    values = ws.get_all_values()
+    if len(values) <= 2:
+        return []
+    headers = values[1]
+    records = []
+    for row in values[2:]:
+        row_p = row + [""] * (len(headers) - len(row))
+        records.append(dict(zip(headers, row_p)))
+    return records
 
-def subir_a_drive(drive, img_bytes, nombre):
-    media = MediaIoBaseUpload(io.BytesIO(img_bytes), mimetype="image/jpeg")
-    meta  = {"name": nombre, "parents": [DRIVE_FOLDER_ID]}
-    f = drive.files().create(
-        body=meta, media_body=media,
-        fields="id, webViewLink",
-        supportsAllDrives=True
-    ).execute()
-    return f.get("webViewLink", "")
-
+# ─── IMAGEN ───────────────────────────────────────────────────────────────────
 def cargar_imagen(fuente):
     img = Image.open(fuente)
     img = ImageOps.exif_transpose(img)
@@ -206,7 +250,7 @@ def cargar_imagen(fuente):
     return img
 
 def dibujar_puntos(img_pil, puntos, tipo="vertical"):
-    img = np.array(img_pil)
+    img    = np.array(img_pil)
     ih, iw = img.shape[:2]
     radio  = max(10, min(iw, ih) // 28)
     fuente = cv2.FONT_HERSHEY_SIMPLEX
@@ -217,8 +261,8 @@ def dibujar_puntos(img_pil, puntos, tipo="vertical"):
         tw, th = cv2.getTextSize(txt, fuente, escala, grosor)[0]
         tx, ty = x - tw // 2, y + th // 2
         if tipo == "vertical":
-            cv2.line(img, (x-radio,y), (x+radio,y), (0,0,0), max(2,radio//5))
-            cv2.line(img, (x,y-radio), (x,y+radio), (0,0,0), max(2,radio//5))
+            cv2.line(img, (x-radio,y), (x+radio,y), (0,0,0),    max(2,radio//5))
+            cv2.line(img, (x,y-radio), (x,y+radio), (0,0,0),    max(2,radio//5))
             cv2.putText(img, txt, (tx-1,ty+1), fuente, escala, (255,255,255), grosor+2, cv2.LINE_AA)
             cv2.putText(img, txt, (tx,ty),     fuente, escala, (0,0,255),     grosor,   cv2.LINE_AA)
         else:
@@ -227,10 +271,74 @@ def dibujar_puntos(img_pil, puntos, tipo="vertical"):
             cv2.putText(img, txt, (tx,ty),     fuente, escala, (255,255,255), grosor,   cv2.LINE_AA)
     return Image.fromarray(img)
 
-for k, v in {"puntos_v":[],"puntos_h":[],"img_orig":None,"guardado":False,"link_drive":""}.items():
+# ─── FRAGMENT: CONTEO ─────────────────────────────────────────────────────────
+@st.fragment
+def contar_material(tipo):
+    key_p  = "puntos_v"  if tipo == "vertical" else "puntos_h"
+    key_m  = "mapa_v"    if tipo == "vertical" else "mapa_h"
+    key_d  = "decl_v"    if tipo == "vertical" else "decl_h"
+    label  = "Verticales" if tipo == "vertical" else "Horizontales"
+    desc   = "tubo vertical → cruz negra + número rojo" if tipo == "vertical" \
+             else "horizontal/cabezal → círculo rojo + número blanco"
+
+    st.markdown(
+        "<p style='color:#8899BB;font-size:0.82rem;margin-bottom:6px;'>"
+        "Toca cada " + desc + ".</p>",
+        unsafe_allow_html=True
+    )
+
+    img_anotada = dibujar_puntos(
+        st.session_state["img_orig"], st.session_state[key_p], tipo
+    )
+    coord = streamlit_image_coordinates(img_anotada, key=key_m)
+
+    total = len(st.session_state[key_p])
+    st.markdown(
+        "<div class='metric-card'>"
+        "<div class='metric-label'>" + label + " marcados</div>"
+        "<div class='metric-value'>" + str(total) + "</div>"
+        "</div>",
+        unsafe_allow_html=True
+    )
+
+    c1, c2 = st.columns(2)
+    if c1.button("↩ Deshacer", key="undo_" + tipo[0]):
+        if st.session_state[key_p]:
+            st.session_state[key_p].pop()
+        st.rerun()
+    if c2.button("🗑 Limpiar todo", key="clear_" + tipo[0]):
+        st.session_state[key_p] = []
+        st.rerun()
+
+    decl = st.number_input(
+        "Cantidad declarada (" + label + ")",
+        min_value=0, value=0, key=key_d
+    )
+    if total > 0 and decl > 0:
+        d = total - decl
+        if d == 0:
+            st.markdown("<span class='badge-conforme'>✓ Conforme</span>", unsafe_allow_html=True)
+        elif abs(d) <= 2:
+            st.markdown("<span class='badge-revision'>⚠ Diferencia: " + f"{d:+d}" + "</span>", unsafe_allow_html=True)
+        else:
+            st.markdown("<span class='badge-alerta'>✗ Diferencia: " + f"{d:+d}" + "</span>", unsafe_allow_html=True)
+
+    if coord:
+        x, y = int(coord["x"]), int(coord["y"])
+        if not st.session_state[key_p] or st.session_state[key_p][-1] != (x, y):
+            st.session_state[key_p].append((x, y))
+            st.rerun()
+
+# ─── SESSION STATE ────────────────────────────────────────────────────────────
+for k, v in {
+    "puntos_v": [], "puntos_h": [], "img_orig": None, "guardado": False,
+    "s_patente": PATENTES[0], "s_chofer": CHOFERES[0], "s_turno": TURNOS[0],
+    "s_tipo_mov": MOVIMIENTOS[0], "s_observaciones": "",
+}.items():
     if k not in st.session_state:
         st.session_state[k] = v
 
+# ─── HEADER ───────────────────────────────────────────────────────────────────
 st.markdown("""
 <div class="armatec-header">
   <div class="armatec-title">🏗️ ARMATEC · Auditoría de Andamios</div>
@@ -240,6 +348,9 @@ st.markdown("""
 
 tab_auditoria, tab_dashboard = st.tabs(["📋  Auditoría", "📊  Dashboard"])
 
+# ══════════════════════════════════════════════════════════════════════════════
+# TAB 1 — AUDITORÍA
+# ══════════════════════════════════════════════════════════════════════════════
 with tab_auditoria:
 
     with st.expander("📝  Datos del turno", expanded=True):
@@ -249,8 +360,14 @@ with tab_auditoria:
         turno    = c3.selectbox("Turno", TURNOS)
         c4, c5   = st.columns(2)
         tipo_mov = c4.selectbox("Tipo de movimiento", MOVIMIENTOS,
-                                help="Salida: camión lleva material · Devolución: camión retorna material")
+                                help="Salida: lleva material · Devolución: retorna material")
         observaciones = c5.text_input("Observaciones", placeholder="Daños, faltantes, notas...")
+
+    st.session_state["s_patente"]       = patente
+    st.session_state["s_chofer"]        = chofer
+    st.session_state["s_turno"]         = turno
+    st.session_state["s_tipo_mov"]      = tipo_mov
+    st.session_state["s_observaciones"] = observaciones
 
     st.markdown("---")
     st.markdown(
@@ -258,120 +375,45 @@ with tab_auditoria:
         unsafe_allow_html=True
     )
 
-    img_nueva = None
-    archivo = st.file_uploader(
-        "Selecciona una foto o toma una desde la cámara",
-        type=["jpg","jpeg","png","webp"],
-        label_visibility="collapsed"
-    )
-    st.caption("En el celular, al tocar el botón aparecen las opciones: Cámara o Galería.")
-    if archivo:
-        try:
-            img_nueva = cargar_imagen(archivo)
-        except Exception as e:
-            st.error("No se pudo abrir la imagen: " + str(e))
+    col_g, col_c = st.columns(2)
+    with col_g:
+        archivo = st.file_uploader(
+            "📁 Desde galería",
+            type=["jpg","jpeg","png","webp"]
+        )
+    with col_c:
+        foto_cam = st.camera_input("📷 Tomar foto ahora")
 
-    if img_nueva is not None and st.session_state["img_orig"] is None:
-        st.session_state.update({
-            "img_orig":   img_nueva,
-            "puntos_v":   [],
-            "puntos_h":   [],
-            "guardado":   False,
-            "link_drive": ""
-        })
+    if st.session_state["img_orig"] is None:
+        fuente = archivo if archivo else (foto_cam if foto_cam else None)
+        if fuente:
+            try:
+                img_nueva = cargar_imagen(fuente)
+                st.session_state.update({
+                    "img_orig":  img_nueva,
+                    "puntos_v":  [],
+                    "puntos_h":  [],
+                    "guardado":  False,
+                })
+            except Exception as e:
+                st.error("No se pudo cargar la imagen: " + str(e))
 
     if st.session_state["img_orig"]:
 
         tab_v, tab_h = st.tabs(["🔵  Verticales", "🔴  Horizontales / Cabezales"])
 
         with tab_v:
-            st.markdown(
-                "<p style='color:#8899BB;font-size:0.82rem;'>Toca cada tubo vertical → cruz negra + número rojo.</p>",
-                unsafe_allow_html=True
-            )
-            ci, cc = st.columns([3, 1])
-            with ci:
-                coord_v = streamlit_image_coordinates(
-                    dibujar_puntos(st.session_state["img_orig"],
-                                   st.session_state["puntos_v"], "vertical"),
-                    key="mapa_v"
-                )
-            with cc:
-                tv = len(st.session_state["puntos_v"])
-                st.markdown(
-                    "<div class='metric-card' style='margin-top:20px;'>"
-                    "<div class='metric-label'>Verticales</div>"
-                    "<div class='metric-value'>" + str(tv) + "</div>"
-                    "<div class='metric-sub'>tubos marcados</div></div>",
-                    unsafe_allow_html=True
-                )
-                if st.button("↩ Deshacer (V)", key="undo_v"):
-                    if st.session_state["puntos_v"]: st.session_state["puntos_v"].pop()
-                    st.rerun()
-                if st.button("🗑 Limpiar (V)", key="clear_v"):
-                    st.session_state["puntos_v"] = []
-                    st.rerun()
-                decl_v = st.number_input("Cantidad declarada (V)", min_value=0, value=0, key="decl_v")
-                if tv > 0 and decl_v > 0:
-                    d = tv - decl_v
-                    if d == 0:
-                        st.markdown("<span class='badge-conforme'>✓ Conforme</span>", unsafe_allow_html=True)
-                    elif abs(d) <= 2:
-                        st.markdown("<span class='badge-revision'>⚠ Dif: " + f"{d:+d}" + "</span>", unsafe_allow_html=True)
-                    else:
-                        st.markdown("<span class='badge-alerta'>✗ Dif: " + f"{d:+d}" + "</span>", unsafe_allow_html=True)
-            if coord_v:
-                x, y = int(coord_v["x"]), int(coord_v["y"])
-                if not st.session_state["puntos_v"] or st.session_state["puntos_v"][-1] != (x, y):
-                    st.session_state["puntos_v"].append((x, y))
-                    st.rerun()
+            contar_material("vertical")
 
         with tab_h:
-            st.markdown(
-                "<p style='color:#8899BB;font-size:0.82rem;'>Toca cada horizontal/cabezal → círculo rojo + número blanco.</p>",
-                unsafe_allow_html=True
-            )
-            ci, cc = st.columns([3, 1])
-            with ci:
-                coord_h = streamlit_image_coordinates(
-                    dibujar_puntos(st.session_state["img_orig"],
-                                   st.session_state["puntos_h"], "horizontal"),
-                    key="mapa_h"
-                )
-            with cc:
-                th_ = len(st.session_state["puntos_h"])
-                st.markdown(
-                    "<div class='metric-card' style='margin-top:20px;'>"
-                    "<div class='metric-label'>Horizontales</div>"
-                    "<div class='metric-value'>" + str(th_) + "</div>"
-                    "<div class='metric-sub'>piezas marcadas</div></div>",
-                    unsafe_allow_html=True
-                )
-                if st.button("↩ Deshacer (H)", key="undo_h"):
-                    if st.session_state["puntos_h"]: st.session_state["puntos_h"].pop()
-                    st.rerun()
-                if st.button("🗑 Limpiar (H)", key="clear_h"):
-                    st.session_state["puntos_h"] = []
-                    st.rerun()
-                decl_h = st.number_input("Cantidad declarada (H)", min_value=0, value=0, key="decl_h")
-                if th_ > 0 and decl_h > 0:
-                    d = th_ - decl_h
-                    if d == 0:
-                        st.markdown("<span class='badge-conforme'>✓ Conforme</span>", unsafe_allow_html=True)
-                    elif abs(d) <= 2:
-                        st.markdown("<span class='badge-revision'>⚠ Dif: " + f"{d:+d}" + "</span>", unsafe_allow_html=True)
-                    else:
-                        st.markdown("<span class='badge-alerta'>✗ Dif: " + f"{d:+d}" + "</span>", unsafe_allow_html=True)
-            if coord_h:
-                x, y = int(coord_h["x"]), int(coord_h["y"])
-                if not st.session_state["puntos_h"] or st.session_state["puntos_h"][-1] != (x, y):
-                    st.session_state["puntos_h"].append((x, y))
-                    st.rerun()
+            contar_material("horizontal")
 
         st.markdown("---")
-        total_contado   = len(st.session_state["puntos_v"]) + len(st.session_state["puntos_h"])
+        total_v         = len(st.session_state["puntos_v"])
+        total_h         = len(st.session_state["puntos_h"])
+        total_contado   = total_v + total_h
         cant_decl_total = st.session_state.get("decl_v", 0) + st.session_state.get("decl_h", 0)
-        material_label  = "V:" + str(len(st.session_state["puntos_v"])) + " · H:" + str(len(st.session_state["puntos_h"]))
+        material_label  = "V:" + str(total_v) + " · H:" + str(total_h)
 
         c1, c2 = st.columns([2, 1])
         c1.info(
@@ -380,69 +422,79 @@ with tab_auditoria:
             "  |  **Diferencia:** " + f"{total_contado - cant_decl_total:+d}" +
             "  |  " + material_label
         )
-        guardar = c2.button("✅ Guardar en Sheets + Drive", type="primary",
-                            disabled=st.session_state["guardado"])
+        btn_guardar = c2.button(
+            "✅ Guardar en Sheets",
+            type="primary",
+            disabled=st.session_state["guardado"]
+        )
 
-        if guardar and not st.session_state["guardado"]:
-            with st.spinner("Guardando..."):
+        if btn_guardar and not st.session_state["guardado"]:
+            with st.spinner("Guardando en Google Sheets..."):
                 try:
-                    gc, drive, sheets = get_clients()
-                    diff_total = total_contado - cant_decl_total
-                    if cant_decl_total == 0:    estado = "Sin declarar"
-                    elif diff_total == 0:        estado = "Conforme"
-                    elif abs(diff_total) <= 2:   estado = "Revision"
-                    else:                        estado = "No Conforme"
+                    gc, sheets = get_clients()
+                    diff = total_contado - cant_decl_total
+                    if cant_decl_total == 0:  estado = "Sin declarar"
+                    elif diff == 0:            estado = "Conforme"
+                    elif abs(diff) <= 2:       estado = "Revision"
+                    else:                      estado = "No Conforme"
+
                     ws    = get_sheet(gc, sheets)
                     n_aud = get_next_audit_number(ws)
                     ahora = datetime.datetime.now()
-                    img_final = dibujar_puntos(st.session_state["img_orig"], st.session_state["puntos_v"], "vertical")
-                    img_final = dibujar_puntos(img_final, st.session_state["puntos_h"], "horizontal")
-                    buf = io.BytesIO()
-                    img_final.save(buf, format="JPEG", quality=88)
-                    nombre_archivo = n_aud + "_" + patente + "_" + ahora.strftime("%Y%m%d_%H%M%S") + ".jpg"
-                    link = subir_a_drive(drive, buf.getvalue(), nombre_archivo)
+
                     guardar_en_sheets(gc, {
-                        "n_auditoria": n_aud, "fecha": ahora.strftime("%Y-%m-%d"),
-                        "hora": ahora.strftime("%H:%M:%S"), "turno": turno,
-                        "patente": patente, "chofer": chofer,
-                        "tipo_movimiento": tipo_mov, "material": material_label,
-                        "cantidad_declarada": cant_decl_total, "cantidad_contada": total_contado,
-                        "diferencia": diff_total, "estado": estado,
-                        "observaciones": observaciones, "auditado_por": "Richard Romero",
-                        "link_foto": link,
+                        "n_auditoria":    n_aud,
+                        "fecha":          ahora.strftime("%Y-%m-%d"),
+                        "hora":           ahora.strftime("%H:%M:%S"),
+                        "turno":          st.session_state["s_turno"],
+                        "patente":        st.session_state["s_patente"],
+                        "chofer":         st.session_state["s_chofer"],
+                        "tipo_movimiento":st.session_state["s_tipo_mov"],
+                        "material":       material_label,
+                        "cant_declarada": cant_decl_total,
+                        "cant_contada":   total_contado,
+                        "diferencia":     diff,
+                        "estado":         estado,
+                        "observaciones":  st.session_state["s_observaciones"],
+                        "auditado_por":   "Richard Romero",
                     })
-                    st.session_state.update({"guardado": True, "link_drive": link})
-                    st.success("✅ Auditoría **" + n_aud + "** guardada · Estado: **" + estado + "**")
-                    if link:
-                        st.markdown("[📷 Ver imagen en Drive](" + link + ")")
+
+                    st.session_state["guardado"] = True
+                    st.success(
+                        "✅ Auditoría **" + n_aud + "** guardada · Estado: **" + estado + "**"
+                    )
                 except Exception as e:
                     st.error("Error al guardar: " + str(e))
 
         if st.session_state["guardado"]:
             if st.button("🔄 Nueva auditoría"):
                 st.session_state.update({
-                    "puntos_v": [], "puntos_h": [], "img_orig": None,
-                    "guardado": False, "link_drive": ""
+                    "puntos_v": [], "puntos_h": [],
+                    "img_orig": None, "guardado": False,
                 })
                 st.rerun()
 
+# ══════════════════════════════════════════════════════════════════════════════
+# TAB 2 — DASHBOARD
+# ══════════════════════════════════════════════════════════════════════════════
 with tab_dashboard:
+
     st.markdown(
-        "<span style='color:" + COL_CIAN + ";font-weight:700;font-size:1rem;'>📊 Resumen de auditorías</span>",
+        "<span style='color:" + COL_CIAN + ";font-weight:700;font-size:1rem;'>"
+        "📊 Resumen de auditorías</span>",
         unsafe_allow_html=True
     )
 
-    col_fmt1, col_fmt2 = st.columns([3, 1])
-    col_fmt1.markdown(
-        "<small style='color:#8899BB;'>Si la hoja no tiene colores, presiona el botón para aplicar el formato profesional.</small>",
+    cf1, cf2 = st.columns([3, 1])
+    cf1.markdown(
+        "<small style='color:#8899BB;'>¿La hoja no tiene colores? Aplica el formato profesional aquí.</small>",
         unsafe_allow_html=True
     )
-    if col_fmt2.button("🎨 Aplicar formato a Sheets"):
-        with st.spinner("Aplicando formato profesional..."):
+    if cf2.button("🎨 Aplicar formato a Sheets"):
+        with st.spinner("Aplicando formato..."):
             try:
-                gc, _, sheets = get_clients()
-                wb = gc.open_by_key(SHEET_ID)
-                ws = wb.worksheet("Auditorias")
+                gc, sheets = get_clients()
+                ws = get_sheet(gc, sheets)
                 formato_sheets(ws, sheets)
                 st.success("✅ Formato aplicado. Abre Google Sheets para verlo.")
             except Exception as e:
@@ -451,7 +503,7 @@ with tab_dashboard:
     st.markdown("---")
 
     try:
-        gc, _, _sheets = get_clients()
+        gc, _ = get_clients()
         historial = cargar_historial(gc)
     except Exception as e:
         st.error("No se pudo cargar el historial: " + str(e))
@@ -462,7 +514,7 @@ with tab_dashboard:
     else:
         import pandas as pd
         df = pd.DataFrame(historial)
-        for col in ["Cantidad Declarada", "Cantidad Contada", "Diferencia"]:
+        for col in ["Cantidad Declarada","Cantidad Contada","Diferencia"]:
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
 
@@ -472,13 +524,13 @@ with tab_dashboard:
         revisiones = len(df[df["Estado"] == "Revision"])
         pct        = round(conformes / total_aud * 100) if total_aud else 0
 
-        k1, k2, k3, k4, k5 = st.columns(5)
+        k1,k2,k3,k4,k5 = st.columns(5)
         for col, label, value, sub in [
-            (k1, "Total auditorías", total_aud,  "registros"),
-            (k2, "Conformes",        conformes,  str(pct) + "%"),
-            (k3, "No Conformes",     no_conf,    "con diferencia"),
-            (k4, "En Revisión",      revisiones, "±1-2 unid."),
-            (k5, "Tasa conformidad", str(pct)+"%","del total"),
+            (k1,"Total auditorías", total_aud,  "registros"),
+            (k2,"Conformes",        conformes,  str(pct)+"%"),
+            (k3,"No Conformes",     no_conf,    "con diferencia"),
+            (k4,"En Revisión",      revisiones, "±1-2 unid."),
+            (k5,"Tasa conformidad", str(pct)+"%","del total"),
         ]:
             col.markdown(
                 "<div class='metric-card'>"
@@ -489,15 +541,16 @@ with tab_dashboard:
             )
 
         st.markdown("<br>", unsafe_allow_html=True)
+
         g1, g2 = st.columns(2)
         with g1:
-            st.markdown("<div style='color:" + COL_CIAN + ";font-weight:600;'>Auditorías por patente</div>", unsafe_allow_html=True)
+            st.markdown("<div style='color:" + COL_CIAN + ";font-weight:600;margin-bottom:6px;'>Auditorías por patente</div>", unsafe_allow_html=True)
             if "Patente" in df.columns:
                 d = df["Patente"].value_counts().reset_index()
                 d.columns = ["Patente","N"]
                 st.bar_chart(d.set_index("Patente"), color=COL_AZUL)
         with g2:
-            st.markdown("<div style='color:" + COL_CIAN + ";font-weight:600;'>Salidas vs Devoluciones</div>", unsafe_allow_html=True)
+            st.markdown("<div style='color:" + COL_CIAN + ";font-weight:600;margin-bottom:6px;'>Salidas vs Devoluciones</div>", unsafe_allow_html=True)
             if "Tipo Movimiento" in df.columns:
                 d = df["Tipo Movimiento"].value_counts().reset_index()
                 d.columns = ["Tipo","N"]
@@ -505,20 +558,24 @@ with tab_dashboard:
 
         g3, g4 = st.columns(2)
         with g3:
-            st.markdown("<div style='color:" + COL_CIAN + ";font-weight:600;'>Auditorías por chofer</div>", unsafe_allow_html=True)
+            st.markdown("<div style='color:" + COL_CIAN + ";font-weight:600;margin-bottom:6px;'>Auditorías por chofer</div>", unsafe_allow_html=True)
             if "Chofer" in df.columns:
                 d = df["Chofer"].value_counts().reset_index()
                 d.columns = ["Chofer","N"]
                 st.bar_chart(d.set_index("Chofer"), color=COL_AZUL)
         with g4:
-            st.markdown("<div style='color:" + COL_CIAN + ";font-weight:600;'>Estado de auditorías</div>", unsafe_allow_html=True)
+            st.markdown("<div style='color:" + COL_CIAN + ";font-weight:600;margin-bottom:6px;'>Estado de auditorías</div>", unsafe_allow_html=True)
             if "Estado" in df.columns:
                 d = df["Estado"].value_counts().reset_index()
                 d.columns = ["Estado","N"]
                 st.bar_chart(d.set_index("Estado"))
 
         st.markdown("---")
-        st.markdown("<div style='color:" + COL_AMARILLO + ";font-weight:700;'>⚠ Últimas diferencias detectadas</div>", unsafe_allow_html=True)
+        st.markdown(
+            "<div style='color:" + COL_AMARILLO + ";font-weight:700;margin-bottom:8px;'>"
+            "⚠ Últimas diferencias detectadas</div>",
+            unsafe_allow_html=True
+        )
         if "Estado" in df.columns:
             alertas = df[df["Estado"].isin(["No Conforme","Revision"])].tail(10)
             if alertas.empty:
@@ -526,7 +583,7 @@ with tab_dashboard:
             else:
                 for _, row in alertas.iterrows():
                     dv       = int(row.get("Diferencia", 0))
-                    estado_r = str(row.get("Estado", ""))
+                    estado_r = str(row.get("Estado",""))
                     badge    = "badge-alerta" if estado_r == "No Conforme" else "badge-revision"
                     st.markdown(
                         "<div class='audit-row'>"
