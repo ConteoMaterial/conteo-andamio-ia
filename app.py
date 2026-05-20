@@ -245,9 +245,9 @@ def cargar_imagen(fuente):
 def dibujar_puntos(img_pil, puntos, tipo="vertical"):
     img    = np.array(img_pil)
     ih, iw = img.shape[:2]
-    radio  = max(10, min(iw, ih) // 28)
+    radio  = max(5, min(iw, ih) // 55)
     fuente = cv2.FONT_HERSHEY_SIMPLEX
-    escala = max(0.4, radio / 22)
+    escala = max(0.28, radio / 30)
     grosor = max(1, radio // 9)
     for i, (x, y) in enumerate(puntos, 1):
         txt = str(i)
@@ -274,7 +274,6 @@ def contar_material(tipo):
     desc   = "tubo vertical → cruz negra + número rojo" if tipo == "vertical" \
              else "horizontal/cabezal → círculo rojo + número blanco"
 
-    # Tracker de última coordenada procesada
     key_last = "_lc_" + tipo[0]
     if key_last not in st.session_state:
         st.session_state[key_last] = None
@@ -323,12 +322,11 @@ def contar_material(tipo):
     )
     coord = streamlit_image_coordinates(img_anotada, key=key_m)
 
-    # Registrar tap
     if coord:
         ct   = (int(coord["x"]), int(coord["y"]))
         last = st.session_state[key_last]
         if last == "__undo__":
-            st.session_state[key_last] = ct   # memoriza sin agregar
+            st.session_state[key_last] = ct
         elif ct != last:
             st.session_state[key_last] = ct
             st.session_state[key_p].append(ct)
