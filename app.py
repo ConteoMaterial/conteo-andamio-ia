@@ -275,8 +275,11 @@ def contar_material(tipo):
              else "horizontal/cabezal → círculo rojo + número blanco"
 
     key_last = "_lc_" + tipo[0]
+    key_zoom = "zoom_" + tipo[0]
     if key_last not in st.session_state:
         st.session_state[key_last] = None
+    if key_zoom not in st.session_state:
+        st.session_state[key_zoom] = 1.0
 
     # ── Contador arriba ──────────────────────────────────────────────────────
     total = len(st.session_state[key_p])
@@ -297,6 +300,19 @@ def contar_material(tipo):
         st.session_state[key_p] = []
         st.session_state[key_last] = "__undo__"
 
+    # ── Zoom ─────────────────────────────────────────────────────────────────
+    zoom = st.session_state[key_zoom]
+    z1, z2, z3 = st.columns([1, 1, 2])
+    if z1.button("🔍+", key="zin_"  + tipo[0]):
+        st.session_state[key_zoom] = min(3.0, zoom + 0.25)
+    if z2.button("🔍−", key="zout_" + tipo[0]):
+        st.session_state[key_zoom] = max(0.5, zoom - 0.25)
+    z3.markdown(
+        "<span style='color:#8899BB;font-size:0.82rem;line-height:2.4;'>"
+        "Zoom: " + str(int(st.session_state[key_zoom] * 100)) + "%</span>",
+        unsafe_allow_html=True
+    )
+
     decl = st.number_input(
         "Cantidad declarada (" + label + ")",
         min_value=0, value=0, key=key_d
@@ -316,14 +332,17 @@ def contar_material(tipo):
         unsafe_allow_html=True
     )
 
-    # ── Imagen con KEY ESTÁTICO (sin scroll al tocar) ─────────────────────────
-    img_anotada = dibujar_puntos(
-        st.session_state["img_orig"], st.session_state[key_p], tipo
-    )
+    # ── Imagen con zoom aplicado ──────────────────────────────────────────────
+    zoom = st.session_state[key_zoom]
+    orig = st.session_state["img_orig"]
+    ow, oh = orig.size
+    zoom_img    = orig.resize((int(ow * zoom), int(oh * zoom)), Image.LANCZOS)
+    puntos_zoom = [(int(x * zoom), int(y * zoom)) for x, y in st.session_state[key_p]]
+    img_anotada = dibujar_puntos(zoom_img, puntos_zoom, tipo)
     coord = streamlit_image_coordinates(img_anotada, key=key_m)
 
     if coord:
-        ct   = (int(coord["x"]), int(coord["y"]))
+        ct   = (int(coord["x"] / zoom), int(coord["y"] / zoom))
         last = st.session_state[key_last]
         if last == "__undo__":
             st.session_state[key_last] = ct
@@ -337,7 +356,7 @@ for k, v in {
     "puntos_v": [], "puntos_h": [], "img_orig": None, "guardado": False,
     "s_patente": PATENTES[0], "s_chofer": CHOFERES[0], "s_turno": TURNOS[0],
     "s_tipo_mov": MOVIMIENTOS[0], "s_observaciones": "", "upload_counter": 0,
-    "_lc_v": None, "_lc_h": None,
+    "_lc_v": None, "_lc_h": None, "zoom_v": 1.0, "zoom_h": 1.0,
 }.items():
     if k not in st.session_state:
         st.session_state[k] = v
@@ -473,7 +492,7 @@ with tab_auditoria:
                     "puntos_v": [], "puntos_h": [],
                     "img_orig": None, "guardado": False,
                     "upload_counter": st.session_state.get("upload_counter", 0) + 1,
-                    "_lc_v": None, "_lc_h": None,
+                    "_lc_v": None, "_lc_h": None, "zoom_v": 1.0, "zoom_h": 1.0,
                 })
                 st.rerun()
 
