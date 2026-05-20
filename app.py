@@ -7,6 +7,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 from googleapiclient.discovery import build
 from streamlit_image_coordinates import streamlit_image_coordinates
 import datetime
+from zoneinfo import ZoneInfo
 import io
 
 # ─── CONFIGURACIÓN ────────────────────────────────────────────────────────────
@@ -290,7 +291,7 @@ def contar_material(tipo):
     img_anotada = dibujar_puntos(
         st.session_state["img_orig"], st.session_state[key_p], tipo
     )
-    coord = streamlit_image_coordinates(img_anotada, key=key_m)
+    coord = streamlit_image_coordinates(img_anotada, key=key_m + "_" + str(len(st.session_state[key_p])))
 
     total = len(st.session_state[key_p])
     st.markdown(
@@ -305,10 +306,8 @@ def contar_material(tipo):
     if c1.button("↩ Deshacer", key="undo_" + tipo[0]):
         if st.session_state[key_p]:
             st.session_state[key_p].pop()
-        st.rerun()
     if c2.button("🗑 Limpiar todo", key="clear_" + tipo[0]):
         st.session_state[key_p] = []
-        st.rerun()
 
     decl = st.number_input(
         "Cantidad declarada (" + label + ")",
@@ -375,17 +374,13 @@ with tab_auditoria:
         unsafe_allow_html=True
     )
 
-    col_g, col_c = st.columns(2)
-    with col_g:
-        archivo = st.file_uploader(
-            "📁 Desde galería",
-            type=["jpg","jpeg","png","webp"]
-        )
-    with col_c:
-        foto_cam = st.camera_input("📷 Tomar foto ahora")
+    archivo = st.file_uploader(
+        "📁 Selecciona la foto del camión desde tu galería",
+        type=["jpg","jpeg","png","webp"]
+    )
 
     if st.session_state["img_orig"] is None:
-        fuente = archivo if archivo else (foto_cam if foto_cam else None)
+        fuente = archivo if archivo else None
         if fuente:
             try:
                 img_nueva = cargar_imagen(fuente)
@@ -440,7 +435,7 @@ with tab_auditoria:
 
                     ws    = get_sheet(gc, sheets)
                     n_aud = get_next_audit_number(ws)
-                    ahora = datetime.datetime.now()
+                    ahora = datetime.datetime.now(ZoneInfo("America/Santiago"))
 
                     guardar_en_sheets(gc, {
                         "n_auditoria":    n_aud,
@@ -485,23 +480,6 @@ with tab_dashboard:
         unsafe_allow_html=True
     )
 
-    cf1, cf2 = st.columns([3, 1])
-    cf1.markdown(
-        "<small style='color:#8899BB;'>¿La hoja no tiene colores? Aplica el formato profesional aquí.</small>",
-        unsafe_allow_html=True
-    )
-    if cf2.button("🎨 Aplicar formato a Sheets"):
-        with st.spinner("Aplicando formato..."):
-            try:
-                gc, sheets = get_clients()
-                ws = get_sheet(gc, sheets)
-                formato_sheets(ws, sheets)
-                st.success("✅ Formato aplicado. Abre Google Sheets para verlo.")
-            except Exception as e:
-                st.error("Error: " + str(e))
-
-    st.markdown("---")
-
     try:
         gc, _ = get_clients()
         historial = cargar_historial(gc)
@@ -517,6 +495,9 @@ with tab_dashboard:
         for col in ["Cantidad Declarada","Cantidad Contada","Diferencia"]:
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+
+        if "Estado" not in df.columns:
+            df["Estado"] = ""
 
         total_aud  = len(df)
         conformes  = len(df[df["Estado"] == "Conforme"])
