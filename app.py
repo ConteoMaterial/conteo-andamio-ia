@@ -282,17 +282,7 @@ def contar_material(tipo):
     desc   = "tubo vertical → cruz negra + número rojo" if tipo == "vertical" \
              else "horizontal/cabezal → círculo rojo + número blanco"
 
-    st.markdown(
-        "<p style='color:#8899BB;font-size:0.82rem;margin-bottom:6px;'>"
-        "Toca cada " + desc + ".</p>",
-        unsafe_allow_html=True
-    )
-
-    img_anotada = dibujar_puntos(
-        st.session_state["img_orig"], st.session_state[key_p], tipo
-    )
-    coord = streamlit_image_coordinates(img_anotada, key=key_m + "_" + str(len(st.session_state[key_p])))
-
+    # ── Contador arriba ──────────────────────────────────────────────────────
     total = len(st.session_state[key_p])
     st.markdown(
         "<div class='metric-card'>"
@@ -322,6 +312,19 @@ def contar_material(tipo):
         else:
             st.markdown("<span class='badge-alerta'>✗ Diferencia: " + f"{d:+d}" + "</span>", unsafe_allow_html=True)
 
+    st.markdown(
+        "<p style='color:#8899BB;font-size:0.82rem;margin:10px 0 4px 0;'>"
+        "Toca cada " + desc + ".</p>",
+        unsafe_allow_html=True
+    )
+
+    # ── Imagen abajo (sin salto de pantalla al tocar) ─────────────────────────
+    img_anotada = dibujar_puntos(
+        st.session_state["img_orig"], st.session_state[key_p], tipo
+    )
+    coord = streamlit_image_coordinates(img_anotada, key=key_m + "_" + str(len(st.session_state[key_p])))
+
+    # Registrar tap
     if coord:
         x, y = int(coord["x"]), int(coord["y"])
         if not st.session_state[key_p] or st.session_state[key_p][-1] != (x, y):
@@ -332,7 +335,7 @@ def contar_material(tipo):
 for k, v in {
     "puntos_v": [], "puntos_h": [], "img_orig": None, "guardado": False,
     "s_patente": PATENTES[0], "s_chofer": CHOFERES[0], "s_turno": TURNOS[0],
-    "s_tipo_mov": MOVIMIENTOS[0], "s_observaciones": "",
+    "s_tipo_mov": MOVIMIENTOS[0], "s_observaciones": "", "upload_counter": 0,
 }.items():
     if k not in st.session_state:
         st.session_state[k] = v
@@ -376,7 +379,8 @@ with tab_auditoria:
 
     archivo = st.file_uploader(
         "📁 Selecciona la foto del camión desde tu galería",
-        type=["jpg","jpeg","png","webp"]
+        type=["jpg","jpeg","png","webp"],
+        key="uploader_" + str(st.session_state.get("upload_counter", 0))
     )
 
     if st.session_state["img_orig"] is None:
@@ -466,6 +470,7 @@ with tab_auditoria:
                 st.session_state.update({
                     "puntos_v": [], "puntos_h": [],
                     "img_orig": None, "guardado": False,
+                    "upload_counter": st.session_state.get("upload_counter", 0) + 1,
                 })
                 st.rerun()
 
