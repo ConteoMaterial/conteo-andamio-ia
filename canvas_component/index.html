@@ -168,12 +168,13 @@ function onRender(event){
   document.getElementById("clbl").textContent =
     (S.tipo === "vertical" ? "VERTICALES" : "HORIZONTALES") + " MARCADOS";
 
-  // sincronizar puntos con Python (fuente de verdad tras cada toque)
-  if (Array.isArray(a.puntos)) S.puntos = a.puntos.map(function(p){ return [p[0], p[1]]; });
-
   // cargar imagen solo si cambió (ej: nueva auditoría)
+  // Al cambiar imagen: reseteamos puntos desde Python (estarán vacíos).
+  // En rerenders normales: el canvas es fuente de verdad, ignoramos puntos de Python
+  // para evitar que una respuesta vieja borre puntos ya marcados.
   if (a.img && a.img !== S.src){
     S.src = a.img;
+    S.puntos = Array.isArray(a.puntos) ? a.puntos.map(function(p){ return [p[0], p[1]]; }) : [];
     const im = new Image();
     im.onload = function(){
       S.imgEl = im;
