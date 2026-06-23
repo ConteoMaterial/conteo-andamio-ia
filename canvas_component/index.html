@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; padding: 0; font-family: 'Inter', Arial, sans-serif; }
+  #root { width: 100%; }
+
+  #counter {
+    background: #1E2A3A;
+    border: 1px solid rgba(45,107,228,0.4);
+    border-radius: 12px;
+    padding: 12px;
+    text-align: center;
+    margin: 0 0 8px 0;
+  }
+  #counter .lbl {
+    font-size: 0.70rem; color: #8899BB; text-transform: uppercase;
+    letter-spacing: 0.08em; margin-bottom: 2px;
+  }
+  #counter .val { font-size: 2.4rem; font-weight: 800; color: #00D4FF; line-height: 1; }
+
+  #toolbar {
+    display: flex; gap: 6px; margin: 0 0 8px 0; flex-wrap: wrap; align-items: center;
+  }
+  #toolbar button {
+    flex: 1 1 auto; min-width: 70px;
+    background: linear-gradient(135deg, #2D6BE4, #1a4fc7);
+    color: #fff; border: none; border-radius: 8px;
+    font-weight: 700; font-size: 0.95rem; padding: 11px 8px;
+    cursor: pointer; user-select: none;
+  }
+  #toolbar button:active { transform: scale(0.96); }
+  #toolbar button.gray { background: #2E3A4E; }
+  #zoomlbl { color: #8899BB; font-size: 0.80rem; padding: 0 4px; min-width: 56px; text-align:center; }
+
+  #scroller {
+    width: 100%;
+    max-height: 460px;
+    overflow: auto;
+    border: 1px solid rgba(45,107,228,0.25);
+    border-radius: 10px;
+    background: #0A0A0F;
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-x pan-y;
+  }
+  canvas { display: block; touch-action: none; }
+  #hint { color:#8899BB; font-size:0.78rem; margin:6px 2px 0 2px; }
+</style>
+</head>
+<body>
+<div id="root">
+  <div id="counter">
+    <div class="lbl" id="clbl">MARCADOS</div>
+    <div class="val" id="cval">0</div>
+  </div>
+
+  <div id="toolbar">
+    <button id="undo" class="gray">↩ Deshacer</button>
+    <button id="clear" class="gray">🗑 Limpiar</button>
+    <button id="zout" class="gray">🔍−</button>
+    <span id="zoomlbl">100%</span>
+    <button id="zin" class="gray">🔍+</button>
+  </div>
+
+  <div id="scroller">
+    <canvas id="cv"></canvas>
+  </div>
+  <div id="hint">Toca cada fierro sobre la foto. Arrastra para mover cuando hay zoom.</div>
+</div>
+
+<script>
+// ─── Protocolo de componente Streamlit (sin build, postMessage directo) ───────
+function send(type, data){
+  window.parent.postMessage(Object.assign({isStreamlitMessage:true, type:type}, data), "*");
+}
+function ready(){ send("streamlit:componentReady", {apiVersion:1}); }
+function setHeight(h){ send("streamlit:setFrameHeight", {height:h}); }
+function setValue(v){ send("streamlit:setComponentValue", {value:v, dataType:"json"}); }
+
+const cv  = document.getElementById("cv");
+const ctx = cv.getContext("2d");
+const scroller = document.getElementById("scroller");
+
+const S = {
+  src: null, imgEl: null, tipo: "vertical",
+  puntos: [], zoom: 1.0
+};
+
+// ─── Dibujo de marcadores en el canvas (instantáneo, sin servidor) ────────────
+function redraw(){
+  const w = cv.width, h = cv.height;
+  ctx.clearRect(0,0,w,h);
+  if (S.imgEl) ctx.drawImage(S.imgEl, 0, 0, w, h);
+
+  const radio = Math.max(5, Math.floor(Math.min(w,h)/55));
+  const lw    = Math.max(2, Math.floor(radio/5));
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.font = "bold " + Math.max(11, Math.floor(radio*1.15)) + "px Arial";
+
+  S.puntos.forEach(function(p, i){
+    const x = p[0], y = p[1], n = String(i+1);
+    if (S.tipo === "vertical"){
+      ctx.lineWidth = lw; ctx.strokeStyle = "#000";
+      ctx.beginPath();
+      ctx.moveTo(x-radio, y); ctx.lineTo(x+radio, y);
+      ctx.moveTo(x, y-radio); ctx.lineTo(x, y+radio);
+      ctx.stroke();
+      ctx.lineWidth = 3; ctx.strokeStyle = "#fff"; ctx.strokeText(n, x, y);
+      ctx.fillStyle = "#ff0033"; ctx.fillText(n, x, y);
+    } else {
+      ctx.lineWidth = lw; ctx.strokeStyle = "#dc0000";
+      ctx.beginPath(); ctx.arc(x, y, radio, 0, 2*Math.PI); ctx.stroke();
+      ctx.lineWidth = 3; ctx.strokeStyle = "#000"; ctx.strokeText(n, x, y);
+      ctx.fillStyle = "#fff"; ctx.fillText(n, x, y);
+    }
+  });
+  document.getElementById("cval").textContent = S.puntos.length;
+}
+
+function applyZoom(){
+  cv.style.width  = Math.round(cv.width  * S.zoom) + "px";
+  cv.style.height = Math.round(cv.height * S.zoom) + "px";
+  document.getElementById("zoomlbl").textContent = Math.round(S.zoom*100) + "%";
+  reportHeight();
+}
+
+function reportHeight(){
+  setHeight(document.getElementById("root").offsetHeight + 4);
+}
+
+// ─── Captura del toque → coordenada en la imagen original ─────────────────────
+let downX = 0, downY = 0;
+cv.addEventListener("pointerdown", function(e){ downX = e.clientX; downY = e.clientY; });
+cv.addEventListener("pointerup", function(e){
+  const moved = Math.abs(e.clientX - downX) > 8 || Math.abs(e.clientY - downY) > 8;
+  if (moved) return;                       // fue scroll/arrastre, no cuenta
+  const rect = cv.getBoundingClientRect();
+  const x = (e.clientX - rect.left) / rect.width  * cv.width;
+  const y = (e.clientY - rect.top)  / rect.height * cv.height;
+  S.puntos.push([Math.round(x), Math.round(y)]);
+  redraw();                                 // dibuja YA, sin esperar al servidor
+  setValue(S.puntos);                       // avisa a Python en segundo plano
+});
+
+// ─── Botones (todos locales = instantáneos) ───────────────────────────────────
+document.getElementById("undo").onclick = function(){
+  if (S.puntos.length){ S.puntos.pop(); redraw(); setValue(S.puntos); }
+};
+document.getElementById("clear").onclick = function(){
+  if (S.puntos.length){ S.puntos = []; redraw(); setValue(S.puntos); }
+};
+document.getElementById("zin").onclick = function(){
+  S.zoom = Math.min(3.0, S.zoom + 0.25); applyZoom();
+};
+document.getElementById("zout").onclick = function(){
+  S.zoom = Math.max(0.5, S.zoom - 0.25); applyZoom();
+};
+
+// ─── Recibir datos desde Python ───────────────────────────────────────────────
+function onRender(event){
+  if (!event.data || event.data.type !== "streamlit:render") return;
+  const a = event.data.args || {};
+  S.tipo = a.tipo || "vertical";
+  document.getElementById("clbl").textContent =
+    (S.tipo === "vertical" ? "VERTICALES" : "HORIZONTALES") + " MARCADOS";
+
+  // sincronizar puntos con Python (fuente de verdad tras cada toque)
+  if (Array.isArray(a.puntos)) S.puntos = a.puntos.map(function(p){ return [p[0], p[1]]; });
+
+  // cargar imagen solo si cambió (ej: nueva auditoría)
+  if (a.img && a.img !== S.src){
+    S.src = a.img;
+    const im = new Image();
+    im.onload = function(){
+      S.imgEl = im;
+      cv.width  = im.naturalWidth;
+      cv.height = im.naturalHeight;
+      S.zoom = 1.0;
+      applyZoom();
+      redraw();
+    };
+    im.src = a.img;
+  } else {
+    redraw();
+    reportHeight();
+  }
+}
+window.addEventListener("message", onRender);
+ready();
+</script>
+</body>
+</html>

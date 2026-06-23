@@ -1,9 +1,6 @@
 streamlit
-opencv-python-headless
 gspread
 oauth2client
 google-api-python-client
 Pillow
-numpy
-streamlit-image-coordinates
 pandas

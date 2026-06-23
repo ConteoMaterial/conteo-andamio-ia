@@ -1,14 +1,28 @@
 import streamlit as st
+import streamlit.components.v1 as components
 from PIL import Image, ImageOps
-import numpy as np
-import cv2
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from googleapiclient.discovery import build
-from streamlit_image_coordinates import streamlit_image_coordinates
 import datetime
 from zoneinfo import ZoneInfo
 import io
+import os
+import base64
+
+# ─── COMPONENTE CANVAS (conteo instantáneo en la tablet, sin lag) ─────────────
+_DIR = os.path.dirname(os.path.abspath(__file__))
+_canvas = components.declare_component(
+    "canvas_counter", path=os.path.join(_DIR, "canvas_component")
+)
+
+def canvas_counter(img_b64, puntos, tipo, key):
+    return _canvas(img=img_b64, puntos=puntos, tipo=tipo, key=key, default=puntos)
+
+def img_a_b64(img_pil):
+    buf = io.BytesIO()
+    img_pil.save(buf, format="PNG")
+    return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
 
 # ─── CONFIGURACIÓN ────────────────────────────────────────────────────────────
 SHEET_ID    = "1tVGss0qpGZwzmTpWd_jdBqIczpQyUkibwa209Gq2t7Y"
@@ -104,64 +118,80 @@ def formato_sheets(ws, sheets_service):
     sid    = ws._properties["sheetId"]
     n_cols = len(HEADERS)
     reqs   = []
+
+    # Fila 1: fusionar celdas para título
     reqs.append({"mergeCells": {
         "range": {"sheetId": sid, "startRowIndex": 0, "endRowIndex": 1,
                   "startColumnIndex": 0, "endColumnIndex": n_cols},
         "mergeType": "MERGE_ALL"
     }})
+    # Fila 1: formato título (negro + cian)
     reqs.append({"repeatCell": {
         "range": {"sheetId": sid, "startRowIndex": 0, "endRowIndex": 1},
         "cell": {"userEnteredFormat": {
             "backgroundColor": {"red": 0.039, "green": 0.039, "blue": 0.059},
             "textFormat": {"bold": True, "fontSize": 14,
                            "foregroundColor": {"red": 0.0, "green": 0.831, "blue": 1.0}},
-            "horizontalAlignment": "CENTER", "verticalAlignment": "MIDDLE",
+            "horizontalAlignment": "CENTER",
+            "verticalAlignment":   "MIDDLE",
         }},
         "fields": "userEnteredFormat(backgroundColor,textFormat,horizontalAlignment,verticalAlignment)"
     }})
+    # Fila 1: altura 44px
     reqs.append({"updateDimensionProperties": {
         "range": {"sheetId": sid, "dimension": "ROWS", "startIndex": 0, "endIndex": 1},
         "properties": {"pixelSize": 44}, "fields": "pixelSize"
     }})
+    # Fila 2: encabezados (azul + blanco)
     reqs.append({"repeatCell": {
         "range": {"sheetId": sid, "startRowIndex": 1, "endRowIndex": 2},
         "cell": {"userEnteredFormat": {
             "backgroundColor": {"red": 0.176, "green": 0.420, "blue": 0.894},
             "textFormat": {"bold": True, "fontSize": 10,
                            "foregroundColor": {"red":1,"green":1,"blue":1}},
-            "horizontalAlignment": "CENTER", "verticalAlignment": "MIDDLE",
+            "horizontalAlignment": "CENTER",
+            "verticalAlignment":   "MIDDLE",
         }},
         "fields": "userEnteredFormat(backgroundColor,textFormat,horizontalAlignment,verticalAlignment)"
     }})
+    # Fila 2: altura 32px
     reqs.append({"updateDimensionProperties": {
         "range": {"sheetId": sid, "dimension": "ROWS", "startIndex": 1, "endIndex": 2},
         "properties": {"pixelSize": 32}, "fields": "pixelSize"
     }})
+    # Congelar filas 1 y 2
     reqs.append({"updateSheetProperties": {
         "properties": {"sheetId": sid, "gridProperties": {"frozenRowCount": 2}},
         "fields": "gridProperties.frozenRowCount"
     }})
+    # Formato condicional Estado: Conforme → verde
     reqs.append({"addConditionalFormatRule": {"rule": {
-        "ranges": [{"sheetId": sid, "startRowIndex": 2, "startColumnIndex": 11, "endColumnIndex": 12}],
+        "ranges": [{"sheetId": sid, "startRowIndex": 2,
+                    "startColumnIndex": 11, "endColumnIndex": 12}],
         "booleanRule": {
             "condition": {"type": "TEXT_EQ", "values": [{"userEnteredValue": "Conforme"}]},
             "format": {"backgroundColor": {"red": 0.0, "green": 0.898, "blue": 0.627}}
         }
     }, "index": 0}})
+    # Estado: No Conforme → rojo
     reqs.append({"addConditionalFormatRule": {"rule": {
-        "ranges": [{"sheetId": sid, "startRowIndex": 2, "startColumnIndex": 11, "endColumnIndex": 12}],
+        "ranges": [{"sheetId": sid, "startRowIndex": 2,
+                    "startColumnIndex": 11, "endColumnIndex": 12}],
         "booleanRule": {
             "condition": {"type": "TEXT_EQ", "values": [{"userEnteredValue": "No Conforme"}]},
             "format": {"backgroundColor": {"red": 1.0, "green": 0.239, "blue": 0.353}}
         }
     }, "index": 1}})
+    # Estado: Revision → amarillo
     reqs.append({"addConditionalFormatRule": {"rule": {
-        "ranges": [{"sheetId": sid, "startRowIndex": 2, "startColumnIndex": 11, "endColumnIndex": 12}],
+        "ranges": [{"sheetId": sid, "startRowIndex": 2,
+                    "startColumnIndex": 11, "endColumnIndex": 12}],
         "booleanRule": {
             "condition": {"type": "TEXT_EQ", "values": [{"userEnteredValue": "Revision"}]},
             "format": {"backgroundColor": {"red": 1.0, "green": 0.690, "blue": 0.125}}
         }
     }, "index": 2}})
+    # Filas alternadas (banding) desde fila 3
     reqs.append({"addBanding": {"bandedRange": {
         "range": {"sheetId": sid, "startRowIndex": 2, "endRowIndex": 1000,
                   "startColumnIndex": 0, "endColumnIndex": n_cols},
@@ -171,12 +201,16 @@ def formato_sheets(ws, sheets_service):
             "secondBandColor": {"red": 1.0,  "green": 1.0,  "blue": 1.0},
         }
     }}})
+    # Anchos de columna
     anchos = [110,100,75,80,90,130,120,110,120,120,85,110,160,130]
     for i, w in enumerate(anchos):
         reqs.append({"updateDimensionProperties": {
-            "range": {"sheetId": sid, "dimension": "COLUMNS", "startIndex": i, "endIndex": i+1},
+            "range": {"sheetId": sid, "dimension": "COLUMNS",
+                      "startIndex": i, "endIndex": i+1},
             "properties": {"pixelSize": w}, "fields": "pixelSize"
         }})
+
+    # Ejecutar request a request para tolerar errores individuales
     for req in reqs:
         try:
             sheets_service.spreadsheets().batchUpdate(
@@ -192,7 +226,9 @@ def get_sheet(gc, sheets_service=None):
         ws = wb.worksheet("Auditorias")
     except gspread.exceptions.WorksheetNotFound:
         ws = wb.add_worksheet("Auditorias", rows=1000, cols=20)
+        # Fila 1: título
         ws.update("A1", [["🏗️ ARMATEC · AUDITORÍA DE ANDAMIOS"]])
+        # Fila 2: encabezados
         ws.append_row(HEADERS)
         if sheets_service:
             try:
@@ -203,6 +239,7 @@ def get_sheet(gc, sheets_service=None):
 
 def get_next_audit_number(ws):
     data = ws.get_all_values()
+    # Fila 1 = título, Fila 2 = encabezados, Fila 3+ = datos
     if len(data) <= 2:
         return "AUD-0001"
     return "AUD-" + str(len(data) - 1).zfill(4)
@@ -224,7 +261,7 @@ def cargar_historial(gc):
     values = ws.get_all_values()
     if len(values) <= 2:
         return []
-    headers = values[1]
+    headers = values[1]   # Fila 2 son los encabezados
     records = []
     for row in values[2:]:
         row_p = row + [""] * (len(headers) - len(row))
@@ -242,77 +279,29 @@ def cargar_imagen(fuente):
         img   = img.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
     return img
 
-def dibujar_puntos(img_pil, puntos, tipo="vertical"):
-    img    = np.array(img_pil)
-    ih, iw = img.shape[:2]
-    radio  = max(5, min(iw, ih) // 55)
-    fuente = cv2.FONT_HERSHEY_SIMPLEX
-    escala = max(0.28, radio / 30)
-    grosor = max(1, radio // 9)
-    for i, (x, y) in enumerate(puntos, 1):
-        txt = str(i)
-        tw, th = cv2.getTextSize(txt, fuente, escala, grosor)[0]
-        tx, ty = x - tw // 2, y + th // 2
-        if tipo == "vertical":
-            cv2.line(img, (x-radio,y), (x+radio,y), (0,0,0),    max(2,radio//5))
-            cv2.line(img, (x,y-radio), (x,y+radio), (0,0,0),    max(2,radio//5))
-            cv2.putText(img, txt, (tx-1,ty+1), fuente, escala, (255,255,255), grosor+2, cv2.LINE_AA)
-            cv2.putText(img, txt, (tx,ty),     fuente, escala, (0,0,255),     grosor,   cv2.LINE_AA)
-        else:
-            cv2.circle(img, (x,y), radio, (0,0,220), max(2,radio//5))
-            cv2.putText(img, txt, (tx-1,ty+1), fuente, escala, (0,0,0),      grosor+2, cv2.LINE_AA)
-            cv2.putText(img, txt, (tx,ty),     fuente, escala, (255,255,255), grosor,   cv2.LINE_AA)
-    return Image.fromarray(img)
-
-# ─── FRAGMENT: CONTEO ─────────────────────────────────────────────────────────
+# ─── FRAGMENT: CONTEO (canvas instantáneo en la tablet, sin lag) ──────────────
 @st.fragment
 def contar_material(tipo):
     key_p  = "puntos_v"  if tipo == "vertical" else "puntos_h"
     key_m  = "mapa_v"    if tipo == "vertical" else "mapa_h"
     key_d  = "decl_v"    if tipo == "vertical" else "decl_h"
     label  = "Verticales" if tipo == "vertical" else "Horizontales"
-    desc   = "tubo vertical → cruz negra + número rojo" if tipo == "vertical" \
-             else "horizontal/cabezal → círculo rojo + número blanco"
 
-    key_last = "_lc_" + tipo[0]
-    key_zoom = "zoom_" + tipo[0]
-    if key_last not in st.session_state:
-        st.session_state[key_last] = None
-    if key_zoom not in st.session_state:
-        st.session_state[key_zoom] = 1.0
+    # El canvas dibuja en la tablet; devuelve la lista de puntos cuando cambia.
+    ret = canvas_counter(
+        st.session_state["img_b64"],
+        st.session_state[key_p],
+        tipo,
+        key=key_m,
+    )
+    if ret is not None:
+        nuevos = [[int(p[0]), int(p[1])] for p in ret]
+        if nuevos != st.session_state[key_p]:
+            st.session_state[key_p] = nuevos
 
-    # ── Contador arriba ──────────────────────────────────────────────────────
     total = len(st.session_state[key_p])
-    st.markdown(
-        "<div class='metric-card'>"
-        "<div class='metric-label'>" + label + " marcados</div>"
-        "<div class='metric-value'>" + str(total) + "</div>"
-        "</div>",
-        unsafe_allow_html=True
-    )
 
-    c1, c2 = st.columns(2)
-    if c1.button("↩ Deshacer", key="undo_" + tipo[0]):
-        if st.session_state[key_p]:
-            st.session_state[key_p].pop()
-        st.session_state[key_last] = "__undo__"
-    if c2.button("🗑 Limpiar todo", key="clear_" + tipo[0]):
-        st.session_state[key_p] = []
-        st.session_state[key_last] = "__undo__"
-
-    # ── Zoom ─────────────────────────────────────────────────────────────────
-    zoom = st.session_state[key_zoom]
-    z1, z2, z3 = st.columns([1, 1, 2])
-    if z1.button("🔍+", key="zin_"  + tipo[0]):
-        st.session_state[key_zoom] = min(3.0, zoom + 0.25)
-    if z2.button("🔍−", key="zout_" + tipo[0]):
-        st.session_state[key_zoom] = max(0.5, zoom - 0.25)
-    z3.markdown(
-        "<span style='color:#8899BB;font-size:0.82rem;line-height:2.4;'>"
-        "Zoom: " + str(int(st.session_state[key_zoom] * 100)) + "%</span>",
-        unsafe_allow_html=True
-    )
-
+    # ── Cantidad declarada + comparación (debajo del canvas) ───────────────────
     decl = st.number_input(
         "Cantidad declarada (" + label + ")",
         min_value=0, value=0, key=key_d
@@ -326,37 +315,12 @@ def contar_material(tipo):
         else:
             st.markdown("<span class='badge-alerta'>✗ Diferencia: " + f"{d:+d}" + "</span>", unsafe_allow_html=True)
 
-    st.markdown(
-        "<p style='color:#8899BB;font-size:0.82rem;margin:10px 0 4px 0;'>"
-        "Toca cada " + desc + ".</p>",
-        unsafe_allow_html=True
-    )
-
-    # ── Imagen con zoom aplicado ──────────────────────────────────────────────
-    zoom = st.session_state[key_zoom]
-    orig = st.session_state["img_orig"]
-    ow, oh = orig.size
-    zoom_img    = orig.resize((int(ow * zoom), int(oh * zoom)), Image.LANCZOS)
-    puntos_zoom = [(int(x * zoom), int(y * zoom)) for x, y in st.session_state[key_p]]
-    img_anotada = dibujar_puntos(zoom_img, puntos_zoom, tipo)
-    coord = streamlit_image_coordinates(img_anotada, key=key_m)
-
-    if coord:
-        ct   = (int(coord["x"] / zoom), int(coord["y"] / zoom))
-        last = st.session_state[key_last]
-        if last == "__undo__":
-            st.session_state[key_last] = ct
-        elif ct != last:
-            st.session_state[key_last] = ct
-            st.session_state[key_p].append(ct)
-            st.rerun()
-
 # ─── SESSION STATE ────────────────────────────────────────────────────────────
 for k, v in {
-    "puntos_v": [], "puntos_h": [], "img_orig": None, "guardado": False,
+    "puntos_v": [], "puntos_h": [], "img_orig": None, "img_b64": None,
+    "guardado": False,
     "s_patente": PATENTES[0], "s_chofer": CHOFERES[0], "s_turno": TURNOS[0],
     "s_tipo_mov": MOVIMIENTOS[0], "s_observaciones": "", "upload_counter": 0,
-    "_lc_v": None, "_lc_h": None, "zoom_v": 1.0, "zoom_h": 1.0,
 }.items():
     if k not in st.session_state:
         st.session_state[k] = v
@@ -376,6 +340,7 @@ tab_auditoria, tab_dashboard = st.tabs(["📋  Auditoría", "📊  Dashboard"])
 # ══════════════════════════════════════════════════════════════════════════════
 with tab_auditoria:
 
+    # ── Formulario ───────────────────────────────────────────────────────────
     with st.expander("📝  Datos del turno", expanded=True):
         c1, c2, c3 = st.columns(3)
         patente  = c1.selectbox("Patente / Camión", PATENTES)
@@ -386,11 +351,12 @@ with tab_auditoria:
                                 help="Salida: lleva material · Devolución: retorna material")
         observaciones = c5.text_input("Observaciones", placeholder="Daños, faltantes, notas...")
 
-    st.session_state["s_patente"]       = patente
-    st.session_state["s_chofer"]        = chofer
-    st.session_state["s_turno"]         = turno
-    st.session_state["s_tipo_mov"]      = tipo_mov
-    st.session_state["s_observaciones"] = observaciones
+    # Guardar form en session_state para acceder desde el guardado
+    st.session_state["s_patente"]      = patente
+    st.session_state["s_chofer"]       = chofer
+    st.session_state["s_turno"]        = turno
+    st.session_state["s_tipo_mov"]     = tipo_mov
+    st.session_state["s_observaciones"]= observaciones
 
     st.markdown("---")
     st.markdown(
@@ -398,12 +364,14 @@ with tab_auditoria:
         unsafe_allow_html=True
     )
 
+    # ── Carga de imagen: galería + cámara ────────────────────────────────────
     archivo = st.file_uploader(
         "📁 Selecciona la foto del camión desde tu galería",
         type=["jpg","jpeg","png","webp"],
         key="uploader_" + str(st.session_state.get("upload_counter", 0))
     )
 
+    # Procesar imagen (solo si no hay una ya cargada)
     if st.session_state["img_orig"] is None:
         fuente = archivo if archivo else None
         if fuente:
@@ -411,6 +379,7 @@ with tab_auditoria:
                 img_nueva = cargar_imagen(fuente)
                 st.session_state.update({
                     "img_orig":  img_nueva,
+                    "img_b64":   img_a_b64(img_nueva),
                     "puntos_v":  [],
                     "puntos_h":  [],
                     "guardado":  False,
@@ -418,6 +387,7 @@ with tab_auditoria:
             except Exception as e:
                 st.error("No se pudo cargar la imagen: " + str(e))
 
+    # ── Conteo ───────────────────────────────────────────────────────────────
     if st.session_state["img_orig"]:
 
         tab_v, tab_h = st.tabs(["🔵  Verticales", "🔴  Horizontales / Cabezales"])
@@ -428,6 +398,7 @@ with tab_auditoria:
         with tab_h:
             contar_material("horizontal")
 
+        # ── Guardar ──────────────────────────────────────────────────────────
         st.markdown("---")
         total_v         = len(st.session_state["puntos_v"])
         total_h         = len(st.session_state["puntos_h"])
@@ -490,9 +461,8 @@ with tab_auditoria:
             if st.button("🔄 Nueva auditoría"):
                 st.session_state.update({
                     "puntos_v": [], "puntos_h": [],
-                    "img_orig": None, "guardado": False,
+                    "img_orig": None, "img_b64": None, "guardado": False,
                     "upload_counter": st.session_state.get("upload_counter", 0) + 1,
-                    "_lc_v": None, "_lc_h": None, "zoom_v": 1.0, "zoom_h": 1.0,
                 })
                 st.rerun()
 
@@ -507,6 +477,7 @@ with tab_dashboard:
         unsafe_allow_html=True
     )
 
+    # ── Cargar historial ─────────────────────────────────────────────────────
     try:
         gc, _ = get_clients()
         historial = cargar_historial(gc)
@@ -532,6 +503,7 @@ with tab_dashboard:
         revisiones = len(df[df["Estado"] == "Revision"])
         pct        = round(conformes / total_aud * 100) if total_aud else 0
 
+        # KPIs
         k1,k2,k3,k4,k5 = st.columns(5)
         for col, label, value, sub in [
             (k1,"Total auditorías", total_aud,  "registros"),
@@ -550,6 +522,7 @@ with tab_dashboard:
 
         st.markdown("<br>", unsafe_allow_html=True)
 
+        # Gráficos
         g1, g2 = st.columns(2)
         with g1:
             st.markdown("<div style='color:" + COL_CIAN + ";font-weight:600;margin-bottom:6px;'>Auditorías por patente</div>", unsafe_allow_html=True)
@@ -578,6 +551,7 @@ with tab_dashboard:
                 d.columns = ["Estado","N"]
                 st.bar_chart(d.set_index("Estado"))
 
+        # Alertas
         st.markdown("---")
         st.markdown(
             "<div style='color:" + COL_AMARILLO + ";font-weight:700;margin-bottom:8px;'>"
@@ -604,6 +578,7 @@ with tab_dashboard:
                         unsafe_allow_html=True
                     )
 
+        # Historial completo
         st.markdown("---")
         with st.expander("📋 Historial completo"):
             cols_show = [c for c in [
