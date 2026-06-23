@@ -470,12 +470,12 @@ with tab_auditoria:
 # TAB 2 — DASHBOARD
 # ══════════════════════════════════════════════════════════════════════════════
 with tab_dashboard:
+    import pandas as pd
 
-    st.markdown(
-        "<span style='color:" + COL_CIAN + ";font-weight:700;font-size:1rem;'>"
-        "📊 Resumen de auditorías</span>",
-        unsafe_allow_html=True
-    )
+    col_act, _ = st.columns([1, 3])
+    if col_act.button("🔄 Actualizar datos"):
+        st.cache_resource.clear()
+        st.rerun()
 
     # ── Cargar historial ─────────────────────────────────────────────────────
     try:
@@ -488,29 +488,36 @@ with tab_dashboard:
     if not historial:
         st.info("Aún no hay registros. Guarda una auditoría para verla aquí.")
     else:
-        import pandas as pd
         df = pd.DataFrame(historial)
+
+        # Limpiar nombres de columna (quitar espacios ocultos)
+        df.columns = [c.strip() for c in df.columns]
+
         for col in ["Cantidad Declarada","Cantidad Contada","Diferencia"]:
             if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+                df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).astype(int)
 
+        # Limpiar Estado (strip + capitalizar para tolerar variaciones)
         if "Estado" not in df.columns:
-            df["Estado"] = ""
+            df["Estado"] = "Sin declarar"
+        else:
+            df["Estado"] = df["Estado"].astype(str).str.strip()
 
         total_aud  = len(df)
         conformes  = len(df[df["Estado"] == "Conforme"])
         no_conf    = len(df[df["Estado"] == "No Conforme"])
         revisiones = len(df[df["Estado"] == "Revision"])
+        sin_decl   = len(df[df["Estado"] == "Sin declarar"])
         pct        = round(conformes / total_aud * 100) if total_aud else 0
 
-        # KPIs
+        # ── KPIs ─────────────────────────────────────────────────────────────
         k1,k2,k3,k4,k5 = st.columns(5)
         for col, label, value, sub in [
-            (k1,"Total auditorías", total_aud,  "registros"),
-            (k2,"Conformes",        conformes,  str(pct)+"%"),
-            (k3,"No Conformes",     no_conf,    "con diferencia"),
-            (k4,"En Revisión",      revisiones, "±1-2 unid."),
-            (k5,"Tasa conformidad", str(pct)+"%","del total"),
+            (k1, "Total",        total_aud,       "auditorías"),
+            (k2, "Conformes",    conformes,        str(pct)+"%"),
+            (k3, "No Conformes", no_conf,          "diferencia"),
+            (k4, "En Revisión",  revisiones,       "±1-2 unid."),
+            (k5, "Sin declarar", sin_decl,         "sin cantidad"),
         ]:
             col.markdown(
                 "<div class='metric-card'>"
@@ -522,68 +529,78 @@ with tab_dashboard:
 
         st.markdown("<br>", unsafe_allow_html=True)
 
-        # Gráficos
+        # ── Historial completo (visible por defecto) ──────────────────────────
+        st.markdown(
+            "<div style='color:" + COL_CIAN + ";font-weight:700;margin-bottom:8px;'>"
+            "📋 Registros de auditorías</div>",
+            unsafe_allow_html=True
+        )
+        cols_show = [c for c in [
+            "N° Auditoria","Fecha","Hora","Turno","Patente","Chofer",
+            "Tipo Movimiento","Cantidad Declarada","Cantidad Contada",
+            "Diferencia","Estado","Observaciones"
+        ] if c in df.columns]
+        st.dataframe(
+            df[cols_show].sort_values("Fecha", ascending=False) if "Fecha" in df.columns else df[cols_show],
+            use_container_width=True,
+            hide_index=True
+        )
+
+        # ── Gráficos ─────────────────────────────────────────────────────────
+        st.markdown("<br>", unsafe_allow_html=True)
         g1, g2 = st.columns(2)
         with g1:
-            st.markdown("<div style='color:" + COL_CIAN + ";font-weight:600;margin-bottom:6px;'>Auditorías por patente</div>", unsafe_allow_html=True)
-            if "Patente" in df.columns:
-                d = df["Patente"].value_counts().reset_index()
+            st.markdown("<div style='color:" + COL_CIAN + ";font-weight:600;margin-bottom:6px;'>Por patente</div>", unsafe_allow_html=True)
+            col_pat = next((c for c in df.columns if "patente" in c.lower()), None)
+            if col_pat:
+                d = df[col_pat].value_counts().reset_index()
                 d.columns = ["Patente","N"]
                 st.bar_chart(d.set_index("Patente"), color=COL_AZUL)
         with g2:
-            st.markdown("<div style='color:" + COL_CIAN + ";font-weight:600;margin-bottom:6px;'>Salidas vs Devoluciones</div>", unsafe_allow_html=True)
-            if "Tipo Movimiento" in df.columns:
-                d = df["Tipo Movimiento"].value_counts().reset_index()
-                d.columns = ["Tipo","N"]
-                st.bar_chart(d.set_index("Tipo"), color=COL_CIAN)
+            st.markdown("<div style='color:" + COL_CIAN + ";font-weight:600;margin-bottom:6px;'>Por chofer</div>", unsafe_allow_html=True)
+            col_chof = next((c for c in df.columns if "chofer" in c.lower()), None)
+            if col_chof:
+                d = df[col_chof].value_counts().reset_index()
+                d.columns = ["Chofer","N"]
+                st.bar_chart(d.set_index("Chofer"), color=COL_AZUL)
 
         g3, g4 = st.columns(2)
         with g3:
-            st.markdown("<div style='color:" + COL_CIAN + ";font-weight:600;margin-bottom:6px;'>Auditorías por chofer</div>", unsafe_allow_html=True)
-            if "Chofer" in df.columns:
-                d = df["Chofer"].value_counts().reset_index()
-                d.columns = ["Chofer","N"]
-                st.bar_chart(d.set_index("Chofer"), color=COL_AZUL)
+            st.markdown("<div style='color:" + COL_CIAN + ";font-weight:600;margin-bottom:6px;'>Salidas vs Devoluciones</div>", unsafe_allow_html=True)
+            col_mov = next((c for c in df.columns if "movimiento" in c.lower() or "tipo" in c.lower()), None)
+            if col_mov:
+                d = df[col_mov].value_counts().reset_index()
+                d.columns = ["Tipo","N"]
+                st.bar_chart(d.set_index("Tipo"), color=COL_CIAN)
         with g4:
-            st.markdown("<div style='color:" + COL_CIAN + ";font-weight:600;margin-bottom:6px;'>Estado de auditorías</div>", unsafe_allow_html=True)
-            if "Estado" in df.columns:
-                d = df["Estado"].value_counts().reset_index()
-                d.columns = ["Estado","N"]
-                st.bar_chart(d.set_index("Estado"))
+            st.markdown("<div style='color:" + COL_CIAN + ";font-weight:600;margin-bottom:6px;'>Estado</div>", unsafe_allow_html=True)
+            d = df["Estado"].value_counts().reset_index()
+            d.columns = ["Estado","N"]
+            st.bar_chart(d.set_index("Estado"))
 
-        # Alertas
-        st.markdown("---")
-        st.markdown(
-            "<div style='color:" + COL_AMARILLO + ";font-weight:700;margin-bottom:8px;'>"
-            "⚠ Últimas diferencias detectadas</div>",
-            unsafe_allow_html=True
-        )
-        if "Estado" in df.columns:
-            alertas = df[df["Estado"].isin(["No Conforme","Revision"])].tail(10)
-            if alertas.empty:
-                st.success("Sin alertas recientes.")
-            else:
-                for _, row in alertas.iterrows():
-                    dv       = int(row.get("Diferencia", 0))
-                    estado_r = str(row.get("Estado",""))
-                    badge    = "badge-alerta" if estado_r == "No Conforme" else "badge-revision"
-                    st.markdown(
-                        "<div class='audit-row'>"
-                        "<span class='audit-row-label'>" + str(row.get("N° Auditoria","")) + "</span>"
-                        "<span class='audit-row-val'>" + str(row.get("Patente","")) + " · " + str(row.get("Chofer","")) + "</span>"
-                        "<span style='color:#8899BB;'>" + str(row.get("Fecha","")) + " " + str(row.get("Hora","")) + "</span>"
-                        "<span style='color:" + COL_AMARILLO + ";font-weight:700;'>Dif: " + f"{dv:+d}" + "</span>"
-                        "<span class='" + badge + "'>" + estado_r + "</span>"
-                        "</div>",
-                        unsafe_allow_html=True
-                    )
-
-        # Historial completo
-        st.markdown("---")
-        with st.expander("📋 Historial completo"):
-            cols_show = [c for c in [
-                "N° Auditoria","Fecha","Turno","Patente","Chofer",
-                "Tipo Movimiento","Cantidad Declarada","Cantidad Contada",
-                "Diferencia","Estado","Observaciones"
-            ] if c in df.columns]
-            st.dataframe(df[cols_show], use_container_width=True, hide_index=True)
+        # ── Alertas ───────────────────────────────────────────────────────────
+        alertas = df[df["Estado"].isin(["No Conforme","Revision"])].tail(10)
+        if not alertas.empty:
+            st.markdown("---")
+            st.markdown(
+                "<div style='color:" + COL_AMARILLO + ";font-weight:700;margin-bottom:8px;'>"
+                "⚠ Últimas diferencias detectadas</div>",
+                unsafe_allow_html=True
+            )
+            for _, row in alertas.iterrows():
+                try:
+                    dv = int(float(row.get("Diferencia", 0)))
+                except Exception:
+                    dv = 0
+                estado_r = str(row.get("Estado",""))
+                badge    = "badge-alerta" if estado_r == "No Conforme" else "badge-revision"
+                st.markdown(
+                    "<div class='audit-row'>"
+                    "<span class='audit-row-label'>" + str(row.get("N° Auditoria","")) + "</span>"
+                    "<span class='audit-row-val'>" + str(row.get("Patente","")) + " · " + str(row.get("Chofer","")) + "</span>"
+                    "<span style='color:#8899BB;'>" + str(row.get("Fecha","")) + " " + str(row.get("Hora","")) + "</span>"
+                    "<span style='color:" + COL_AMARILLO + ";font-weight:700;'>Dif: " + f"{dv:+d}" + "</span>"
+                    "<span class='" + badge + "'>" + estado_r + "</span>"
+                    "</div>",
+                    unsafe_allow_html=True
+                )
