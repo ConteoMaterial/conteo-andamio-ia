@@ -329,7 +329,7 @@ for k, v in {
 st.markdown("""
 <div class="armatec-header">
   <div class="armatec-title">🏗️ ARMATEC · Auditoría de Andamios</div>
-  <div class="armatec-sub">Sistema de control y registro de material · Auditado por: <b>Richard Romero</b></div>
+  <div class="armatec-sub">Sistema de control y registro de material · Auditado por: <b>Richard Gonzalez</b></div>
 </div>
 """, unsafe_allow_html=True)
 
@@ -447,7 +447,7 @@ with tab_auditoria:
                         "diferencia":     diff,
                         "estado":         estado,
                         "observaciones":  st.session_state["s_observaciones"],
-                        "auditado_por":   "Richard Romero",
+                        "auditado_por":   "Richard Gonzalez",
                     })
 
                     st.session_state["guardado"] = True
