@@ -95,11 +95,14 @@ function redraw(){
   ctx.clearRect(0,0,w,h);
   if (S.imgEl) ctx.drawImage(S.imgEl, 0, 0, w, h);
 
-  const radio = Math.max(5, Math.floor(Math.min(w,h)/55));
-  const lw    = Math.max(2, Math.floor(radio/5));
+  const esH   = S.tipo === "horizontal";
+  const radio = esH
+    ? Math.max(3, Math.floor(Math.min(w,h)/90))
+    : Math.max(5, Math.floor(Math.min(w,h)/55));
+  const lw    = Math.max(1, Math.floor(radio/5));
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.font = "bold " + Math.max(11, Math.floor(radio*1.15)) + "px Arial";
+  ctx.font = "bold " + Math.max(esH ? 8 : 11, Math.floor(radio * (esH ? 1.0 : 1.15))) + "px Arial";
 
   S.puntos.forEach(function(p, i){
     const x = p[0], y = p[1], n = String(i+1);
