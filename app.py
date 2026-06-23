@@ -529,49 +529,52 @@ with tab_dashboard:
 
         st.markdown("<br>", unsafe_allow_html=True)
 
-        # ── Historial completo (visible por defecto) ──────────────────────────
+        # ── Historial completo (todas las columnas de Sheets, sin filtro) ───────
         st.markdown(
             "<div style='color:" + COL_CIAN + ";font-weight:700;margin-bottom:8px;'>"
             "📋 Registros de auditorías</div>",
             unsafe_allow_html=True
         )
-        cols_show = [c for c in [
-            "N° Auditoria","Fecha","Hora","Turno","Patente","Chofer",
-            "Tipo Movimiento","Cantidad Declarada","Cantidad Contada",
-            "Diferencia","Estado","Observaciones"
-        ] if c in df.columns]
-        st.dataframe(
-            df[cols_show].sort_values("Fecha", ascending=False) if "Fecha" in df.columns else df[cols_show],
-            use_container_width=True,
-            hide_index=True
-        )
+        # Excluir solo columnas vacías o internas
+        cols_excluir = {"auditado por", "auditado_por"}
+        cols_mostrar = [c for c in df.columns if c.strip().lower() not in cols_excluir and c.strip() != ""]
+        col_fecha = next((c for c in df.columns if "fecha" in c.lower()), None)
+        df_show = df[cols_mostrar].sort_values(col_fecha, ascending=False) if col_fecha else df[cols_mostrar]
+        st.dataframe(df_show, use_container_width=True, hide_index=True)
 
         # ── Gráficos ─────────────────────────────────────────────────────────
         st.markdown("<br>", unsafe_allow_html=True)
         g1, g2 = st.columns(2)
+        col_pat  = next((c for c in df.columns if "patente" in c.lower()), None)
+        col_chof = next((c for c in df.columns if "chofer" in c.lower()), None)
+        col_mov  = next((c for c in df.columns if "movimiento" in c.lower()), None)
+
         with g1:
             st.markdown("<div style='color:" + COL_CIAN + ";font-weight:600;margin-bottom:6px;'>Por patente</div>", unsafe_allow_html=True)
-            col_pat = next((c for c in df.columns if "patente" in c.lower()), None)
             if col_pat:
                 d = df[col_pat].value_counts().reset_index()
                 d.columns = ["Patente","N"]
                 st.bar_chart(d.set_index("Patente"), color=COL_AZUL)
+            else:
+                st.caption("Sin datos de patente")
         with g2:
             st.markdown("<div style='color:" + COL_CIAN + ";font-weight:600;margin-bottom:6px;'>Por chofer</div>", unsafe_allow_html=True)
-            col_chof = next((c for c in df.columns if "chofer" in c.lower()), None)
             if col_chof:
                 d = df[col_chof].value_counts().reset_index()
                 d.columns = ["Chofer","N"]
                 st.bar_chart(d.set_index("Chofer"), color=COL_AZUL)
+            else:
+                st.caption("Sin datos de chofer")
 
         g3, g4 = st.columns(2)
         with g3:
             st.markdown("<div style='color:" + COL_CIAN + ";font-weight:600;margin-bottom:6px;'>Salidas vs Devoluciones</div>", unsafe_allow_html=True)
-            col_mov = next((c for c in df.columns if "movimiento" in c.lower() or "tipo" in c.lower()), None)
             if col_mov:
                 d = df[col_mov].value_counts().reset_index()
                 d.columns = ["Tipo","N"]
                 st.bar_chart(d.set_index("Tipo"), color=COL_CIAN)
+            else:
+                st.caption("Sin datos de movimiento")
         with g4:
             st.markdown("<div style='color:" + COL_CIAN + ";font-weight:600;margin-bottom:6px;'>Estado</div>", unsafe_allow_html=True)
             d = df["Estado"].value_counts().reset_index()
