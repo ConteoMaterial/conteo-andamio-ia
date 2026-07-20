@@ -135,18 +135,34 @@ function reportHeight(){
   setHeight(document.getElementById("root").offsetHeight + 4);
 }
 
-// ─── Captura del toque → coordenada en la imagen original ─────────────────────
-let downX = 0, downY = 0;
-cv.addEventListener("pointerdown", function(e){ downX = e.clientX; downY = e.clientY; });
+// ─── Tap corto = marcar punto · Arrastre = mover vista (pan) ─────────────────
+let downX = 0, downY = 0, isPanning = false;
+let panSL = 0, panST = 0;
+
+cv.addEventListener("pointerdown", function(e){
+  downX = e.clientX; downY = e.clientY;
+  isPanning = false;
+  panSL = scroller.scrollLeft;
+  panST = scroller.scrollTop;
+  cv.setPointerCapture(e.pointerId);
+});
+cv.addEventListener("pointermove", function(e){
+  const dx = Math.abs(e.clientX - downX), dy = Math.abs(e.clientY - downY);
+  if (!isPanning && (dx > 6 || dy > 6)) isPanning = true;
+  if (isPanning){
+    scroller.scrollLeft = panSL - (e.clientX - downX);
+    scroller.scrollTop  = panST - (e.clientY - downY);
+  }
+});
 cv.addEventListener("pointerup", function(e){
-  const moved = Math.abs(e.clientX - downX) > 8 || Math.abs(e.clientY - downY) > 8;
-  if (moved) return;                       // fue scroll/arrastre, no cuenta
+  if (isPanning) return;
+  // coordenada relativa al canvas real (independiente del zoom CSS)
   const rect = cv.getBoundingClientRect();
   const x = (e.clientX - rect.left) / rect.width  * cv.width;
   const y = (e.clientY - rect.top)  / rect.height * cv.height;
   S.puntos.push([Math.round(x), Math.round(y)]);
-  redraw();                                 // dibuja YA, sin esperar al servidor
-  setValue(S.puntos);                       // avisa a Python en segundo plano
+  redraw();
+  setValue(S.puntos);
 });
 
 // ─── Botones (todos locales = instantáneos) ───────────────────────────────────

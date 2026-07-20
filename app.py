@@ -33,7 +33,20 @@ TURNOS      = ["Mañana","Tarde","Noche"]
 MOVIMIENTOS = ["Salida","Devolución"]
 HEADERS     = ["N° Auditoria","Fecha","Hora","Turno","Patente","Chofer",
                "Tipo Movimiento","Material","Cantidad Declarada","Cantidad Contada",
-               "Diferencia","Estado","Observaciones","Auditado Por"]
+               "Diferencia","Estado","Observaciones","Auditado Por",
+               "Diagonales","Amarras 3.0m","Amarras 1.5m","Plataformas",
+               "Tablones","Bases/Niveladores","Abrazaderas"]
+
+# (label visible, clave corta para session_state)
+MATERIALES_SEC = [
+    ("Diagonales",        "diag"),
+    ("Amarras 3.0m",      "am30"),
+    ("Amarras 1.5m",      "am15"),
+    ("Plataformas",       "plat"),
+    ("Tablones",          "tabl"),
+    ("Bases/Niveladores", "base"),
+    ("Abrazaderas",       "abra"),
+]
 
 # ─── COLORES ──────────────────────────────────────────────────────────────────
 COL_NEGRO    = "#0A0A0F"
@@ -246,6 +259,10 @@ def get_next_audit_number(ws):
 
 def guardar_en_sheets(gc, registro):
     ws = get_sheet(gc)
+    # Actualizar encabezado si le faltan las columnas de materiales secundarios
+    encabezado_actual = ws.row_values(2)
+    if len(encabezado_actual) < len(HEADERS):
+        ws.update("A2", [HEADERS])
     ws.append_row([
         registro["n_auditoria"],    registro["fecha"],
         registro["hora"],           registro["turno"],
@@ -254,6 +271,10 @@ def guardar_en_sheets(gc, registro):
         registro["cant_declarada"], registro["cant_contada"],
         registro["diferencia"],     registro["estado"],
         registro["observaciones"],  registro["auditado_por"],
+        registro.get("diag", 0),    registro.get("am30", 0),
+        registro.get("am15", 0),    registro.get("plat", 0),
+        registro.get("tabl", 0),    registro.get("base", 0),
+        registro.get("abra", 0),
     ])
 
 def cargar_historial(gc):
@@ -316,12 +337,15 @@ def contar_material(tipo):
             st.markdown("<span class='badge-alerta'>✗ Diferencia: " + f"{d:+d}" + "</span>", unsafe_allow_html=True)
 
 # ─── SESSION STATE ────────────────────────────────────────────────────────────
-for k, v in {
+_ss_defaults = {
     "puntos_v": [], "puntos_h": [], "img_orig": None, "img_b64": None,
     "guardado": False,
     "s_patente": PATENTES[0], "s_chofer": CHOFERES[0], "s_turno": TURNOS[0],
     "s_tipo_mov": MOVIMIENTOS[0], "s_observaciones": "", "upload_counter": 0,
-}.items():
+}
+for _lbl, _key in MATERIALES_SEC:
+    _ss_defaults["sec_" + _key] = 0
+for k, v in _ss_defaults.items():
     if k not in st.session_state:
         st.session_state[k] = v
 
@@ -390,13 +414,54 @@ with tab_auditoria:
     # ── Conteo ───────────────────────────────────────────────────────────────
     if st.session_state["img_orig"]:
 
-        tab_v, tab_h = st.tabs(["🔵  Verticales", "🔴  Horizontales / Cabezales"])
+        tab_v, tab_h, tab_sec = st.tabs([
+            "🔵  Verticales",
+            "🔴  Horizontales / Cabezales",
+            "🔩  Accesorios"
+        ])
 
         with tab_v:
             contar_material("vertical")
 
         with tab_h:
             contar_material("horizontal")
+
+        with tab_sec:
+            st.markdown(
+                "<div style='color:#00D4FF;font-weight:700;margin-bottom:12px;'>"
+                "🔩 Registro de Materiales Secundarios y Accesorios</div>",
+                unsafe_allow_html=True
+            )
+            st.markdown(
+                "<p style='color:#8899BB;font-size:0.82rem;margin-bottom:14px;'>"
+                "Ingresa la cantidad contada de cada accesorio. "
+                "La foto es opcional como respaldo visual.</p>",
+                unsafe_allow_html=True
+            )
+            for lbl, key in MATERIALES_SEC:
+                st.markdown(
+                    "<div style='color:#fff;font-weight:600;margin:10px 0 4px 0;'>"
+                    + lbl + "</div>",
+                    unsafe_allow_html=True
+                )
+                c1, c2 = st.columns([1, 2])
+                cant_sec = c1.number_input(
+                    "Cantidad contada",
+                    min_value=0,
+                    value=st.session_state.get("sec_" + key, 0),
+                    key="sec_input_" + key,
+                    label_visibility="collapsed"
+                )
+                st.session_state["sec_" + key] = cant_sec
+                foto_sec = c2.file_uploader(
+                    "Foto de respaldo (opcional)",
+                    type=["jpg","jpeg","png","webp"],
+                    key="sec_foto_" + key + "_" + str(st.session_state.get("upload_counter", 0)),
+                    label_visibility="collapsed"
+                )
+                if foto_sec:
+                    st.image(foto_sec, width=180)
+                st.markdown("<hr style='border-color:#2D6BE422;margin:8px 0;'>", unsafe_allow_html=True)
 
         # ── Guardar ──────────────────────────────────────────────────────────
         st.markdown("---")
@@ -448,6 +513,11 @@ with tab_auditoria:
                         "estado":         estado,
                         "observaciones":  st.session_state["s_observaciones"],
                         "auditado_por":   "Richard Gonzalez",
+                        **{"sec_" + k: st.session_state.get("sec_" + k, 0)
+                           for _, k in MATERIALES_SEC},
+                        # claves cortas para guardar_en_sheets
+                        **{k: st.session_state.get("sec_" + k, 0)
+                           for _, k in MATERIALES_SEC},
                     })
 
                     st.session_state["guardado"] = True
@@ -459,11 +529,14 @@ with tab_auditoria:
 
         if st.session_state["guardado"]:
             if st.button("🔄 Nueva auditoría"):
-                st.session_state.update({
+                _reset = {
                     "puntos_v": [], "puntos_h": [],
                     "img_orig": None, "img_b64": None, "guardado": False,
                     "upload_counter": st.session_state.get("upload_counter", 0) + 1,
-                })
+                }
+                for _, _k in MATERIALES_SEC:
+                    _reset["sec_" + _k] = 0
+                st.session_state.update(_reset)
                 st.rerun()
 
 # ══════════════════════════════════════════════════════════════════════════════
