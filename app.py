@@ -4,6 +4,7 @@ from PIL import Image, ImageOps
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from googleapiclient.discovery import build
+from supabase import create_client
 import datetime
 from zoneinfo import ZoneInfo
 import io
@@ -35,7 +36,8 @@ HEADERS     = ["N° Auditoria","Fecha","Hora","Turno","Patente","Chofer",
                "Tipo Movimiento","Material","Cantidad Declarada","Cantidad Contada",
                "Diferencia","Estado","Observaciones","Auditado Por",
                "Diagonales","Amarras 3.0m","Amarras 1.5m","Plataformas",
-               "Tablones","Bases/Niveladores","Abrazaderas"]
+               "Tablones","Bases/Niveladores","Abrazaderas",
+               "Foto V","Foto H"]
 
 # (label visible, clave corta para session_state)
 MATERIALES_SEC = [
@@ -125,6 +127,31 @@ def get_clients():
     gc     = gspread.authorize(creds)
     sheets = build("sheets", "v4", credentials=creds)
     return gc, sheets
+
+# ─── SUPABASE STORAGE (fotos de auditoría) ────────────────────────────────────
+SUPA_BUCKET = "AuditoriaFotos"
+
+@st.cache_resource
+def get_supabase():
+    return create_client(
+        st.secrets["supabase"]["url"],
+        st.secrets["supabase"]["key"],
+    )
+
+def subir_foto_supabase(img_pil, nombre_archivo):
+    try:
+        supa = get_supabase()
+        buf  = io.BytesIO()
+        img_pil.save(buf, format="JPEG", quality=85)
+        supa.storage.from_(SUPA_BUCKET).upload(
+            path=nombre_archivo,
+            file=buf.getvalue(),
+            file_options={"content-type": "image/jpeg", "upsert": "true"},
+        )
+        url = st.secrets["supabase"]["url"]
+        return url + "/storage/v1/object/public/" + SUPA_BUCKET + "/" + nombre_archivo
+    except Exception:
+        return ""
 
 # ─── FORMATO PROFESIONAL SHEETS ───────────────────────────────────────────────
 def formato_sheets(ws, sheets_service):
@@ -271,6 +298,7 @@ def guardar_en_sheets(gc, registro):
         registro.get("am15", 0),    registro.get("plat", 0),
         registro.get("tabl", 0),    registro.get("base", 0),
         registro.get("abra", 0),
+        registro.get("foto_v", ""), registro.get("foto_h", ""),
     ])
 
 def cargar_historial(gc):
@@ -508,7 +536,7 @@ with tab_auditoria:
         btn_guardar = c2.button("✅ Guardar todo", type="primary")
 
         if btn_guardar:
-            with st.spinner("Guardando en Google Sheets..."):
+            with st.spinner("Guardando registro y subiendo fotos..."):
                 try:
                     gc, sheets = get_clients()
                     diff = total_contado - cant_decl_total
@@ -520,6 +548,21 @@ with tab_auditoria:
                     ws    = get_sheet(gc, sheets)
                     n_aud = get_next_audit_number(ws)
                     ahora = datetime.datetime.now(ZoneInfo("America/Santiago"))
+                    ts    = ahora.strftime("%Y%m%d_%H%M%S")
+
+                    # Subir fotos a Supabase (si existen)
+                    foto_v_url = ""
+                    foto_h_url = ""
+                    if st.session_state.get("img_orig_v") is not None:
+                        foto_v_url = subir_foto_supabase(
+                            st.session_state["img_orig_v"],
+                            n_aud + "_V_" + ts + ".jpg"
+                        )
+                    if st.session_state.get("img_orig_h") is not None:
+                        foto_h_url = subir_foto_supabase(
+                            st.session_state["img_orig_h"],
+                            n_aud + "_H_" + ts + ".jpg"
+                        )
 
                     guardar_en_sheets(gc, {
                         "n_auditoria":    n_aud,
@@ -536,6 +579,8 @@ with tab_auditoria:
                         "estado":         estado,
                         "observaciones":  st.session_state["s_observaciones"],
                         "auditado_por":   "Richard Gonzalez",
+                        "foto_v":         foto_v_url,
+                        "foto_h":         foto_h_url,
                         **{k: st.session_state.get("sec_" + k, 0) for _, k in MATERIALES_SEC},
                     })
 
@@ -605,13 +650,15 @@ with tab_dashboard:
         col_est  = _fc(df, "Estado")
         col_obs  = _fc(df, "Observaciones")
         col_aud  = _fc(df, "Auditado Por", "Auditado")
-        col_diag = _fc(df, "Diagonales")
-        col_am30 = _fc(df, "Amarras 3.0m", "Amarras 3")
-        col_am15 = _fc(df, "Amarras 1.5m", "Amarras 1")
-        col_plat = _fc(df, "Plataformas")
-        col_tabl = _fc(df, "Tablones")
-        col_base = _fc(df, "Bases", "Niveladores")
-        col_abra = _fc(df, "Abrazaderas")
+        col_diag  = _fc(df, "Diagonales")
+        col_am30  = _fc(df, "Amarras 3.0m", "Amarras 3")
+        col_am15  = _fc(df, "Amarras 1.5m", "Amarras 1")
+        col_plat  = _fc(df, "Plataformas")
+        col_tabl  = _fc(df, "Tablones")
+        col_base  = _fc(df, "Bases", "Niveladores")
+        col_abra  = _fc(df, "Abrazaderas")
+        col_fotov = _fc(df, "Foto V", "Foto Verticales")
+        col_fotoh = _fc(df, "Foto H", "Foto Horizontales")
 
         for c in [col_cd, col_cc, col_dif]:
             if c:
@@ -716,6 +763,27 @@ with tab_dashboard:
             else:
                 st.caption("Sin accesorios registrados en esta auditoría.")
 
+            # Fotos
+            url_v = _v(row, col_fotov)
+            url_h = _v(row, col_fotoh)
+            if url_v != "—" or url_h != "—":
+                st.markdown(
+                    "<div style='color:#00D4FF;font-weight:600;margin:14px 0 8px 0;'>"
+                    "📷 Fotografías del registro</div>",
+                    unsafe_allow_html=True
+                )
+                cf1, cf2 = st.columns(2)
+                if url_v != "—":
+                    cf1.image(url_v, caption="Verticales", use_container_width=True)
+                else:
+                    cf1.caption("Sin foto de verticales")
+                if url_h != "—":
+                    cf2.image(url_h, caption="Horizontales", use_container_width=True)
+                else:
+                    cf2.caption("Sin foto de horizontales")
+            else:
+                st.caption("Sin fotos guardadas en este registro.")
+
         st.markdown("---")
 
         # ── Tabla completa ────────────────────────────────────────────────────
@@ -725,7 +793,8 @@ with tab_dashboard:
             unsafe_allow_html=True
         )
         cols_ocultar = {c for c in [col_aud, col_diag, col_am30, col_am15,
-                                     col_plat, col_tabl, col_base, col_abra] if c}
+                                     col_plat, col_tabl, col_base, col_abra,
+                                     col_fotov, col_fotoh] if c}
         cols_mostrar = [c for c in df.columns if c not in cols_ocultar and not c.startswith("_")]
         st.dataframe(
             df_sorted[cols_mostrar] if col_f else df[cols_mostrar],
