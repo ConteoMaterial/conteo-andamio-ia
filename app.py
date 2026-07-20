@@ -569,35 +569,71 @@ with tab_dashboard:
         st.info("Aún no hay registros. Guarda una auditoría para verla aquí.")
     else:
         df = pd.DataFrame(historial)
-
-        # Limpiar nombres de columna (quitar espacios ocultos)
         df.columns = [c.strip() for c in df.columns]
 
-        for col in ["Cantidad Declarada","Cantidad Contada","Diferencia"]:
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).astype(int)
+        # ── Búsqueda de columnas insensible a mayúsculas y variaciones ───────
+        def _fc(df, *names):
+            low = {c.strip().lower(): c for c in df.columns}
+            for name in names:
+                n = name.strip().lower()
+                if n in low:
+                    return low[n]
+            for name in names:
+                n = name.strip().lower()
+                for k, v in low.items():
+                    if n in k:
+                        return v
+            return None
 
-        # Limpiar Estado (strip + capitalizar para tolerar variaciones)
-        if "Estado" not in df.columns:
-            df["Estado"] = "Sin declarar"
-        else:
-            df["Estado"] = df["Estado"].astype(str).str.strip()
+        def _v(row, col):
+            if not col or col not in row.index:
+                return "—"
+            v = str(row[col])
+            return v if v not in ("nan","None","") else "—"
+
+        col_n    = _fc(df, "N° Auditoria", "auditoria", "n auditoria")
+        col_f    = _fc(df, "Fecha")
+        col_h    = _fc(df, "Hora")
+        col_t    = _fc(df, "Turno")
+        col_pat  = _fc(df, "Patente")
+        col_chof = _fc(df, "Chofer")
+        col_mov  = _fc(df, "Tipo Movimiento", "Movimiento")
+        col_mat  = _fc(df, "Material")
+        col_cd   = _fc(df, "Cantidad Declarada", "Declarada")
+        col_cc   = _fc(df, "Cantidad Contada", "Contada")
+        col_dif  = _fc(df, "Diferencia")
+        col_est  = _fc(df, "Estado")
+        col_obs  = _fc(df, "Observaciones")
+        col_aud  = _fc(df, "Auditado Por", "Auditado")
+        col_diag = _fc(df, "Diagonales")
+        col_am30 = _fc(df, "Amarras 3.0m", "Amarras 3")
+        col_am15 = _fc(df, "Amarras 1.5m", "Amarras 1")
+        col_plat = _fc(df, "Plataformas")
+        col_tabl = _fc(df, "Tablones")
+        col_base = _fc(df, "Bases", "Niveladores")
+        col_abra = _fc(df, "Abrazaderas")
+
+        for c in [col_cd, col_cc, col_dif]:
+            if c:
+                df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0).astype(int)
+
+        df["_est"] = df[col_est].astype(str).str.strip() if col_est else "Sin declarar"
 
         total_aud  = len(df)
-        conformes  = len(df[df["Estado"] == "Conforme"])
-        no_conf    = len(df[df["Estado"] == "No Conforme"])
-        revisiones = len(df[df["Estado"] == "Revision"])
-        sin_decl   = len(df[df["Estado"] == "Sin declarar"])
+        conformes  = len(df[df["_est"] == "Conforme"])
+        no_conf    = len(df[df["_est"] == "No Conforme"])
+        revisiones = len(df[df["_est"] == "Revision"])
+        sin_decl   = len(df[df["_est"] == "Sin declarar"])
         pct        = round(conformes / total_aud * 100) if total_aud else 0
 
         # ── KPIs ─────────────────────────────────────────────────────────────
         k1,k2,k3,k4,k5 = st.columns(5)
         for col, label, value, sub in [
-            (k1, "Total",        total_aud,       "auditorías"),
-            (k2, "Conformes",    conformes,        str(pct)+"%"),
-            (k3, "No Conformes", no_conf,          "diferencia"),
-            (k4, "En Revisión",  revisiones,       "±1-2 unid."),
-            (k5, "Sin declarar", sin_decl,         "sin cantidad"),
+            (k1, "Total",        total_aud,  "auditorías"),
+            (k2, "Conformes",    conformes,  str(pct)+"%"),
+            (k3, "No Conformes", no_conf,    "diferencia"),
+            (k4, "En Revisión",  revisiones, "±1-2 unid."),
+            (k5, "Sin declarar", sin_decl,   "sin cantidad"),
         ]:
             col.markdown(
                 "<div class='metric-card'>"
@@ -609,60 +645,145 @@ with tab_dashboard:
 
         st.markdown("<br>", unsafe_allow_html=True)
 
-        # ── Historial completo (todas las columnas de Sheets, sin filtro) ───────
+        # ── Detalle de un registro ────────────────────────────────────────────
         st.markdown(
             "<div style='color:" + COL_CIAN + ";font-weight:700;margin-bottom:8px;'>"
-            "📋 Registros de auditorías</div>",
+            "🔍 Ver detalle de una auditoría</div>",
             unsafe_allow_html=True
         )
-        # Excluir solo columnas vacías o internas
-        cols_excluir = {"auditado por", "auditado_por"}
-        cols_mostrar = [c for c in df.columns if c.strip().lower() not in cols_excluir and c.strip() != ""]
-        col_fecha = next((c for c in df.columns if "fecha" in c.lower()), None)
-        df_show = df[cols_mostrar].sort_values(col_fecha, ascending=False) if col_fecha else df[cols_mostrar]
-        st.dataframe(df_show, use_container_width=True, hide_index=True)
+        df_sorted = df.sort_values([col_f, col_h], ascending=False) if col_f and col_h else df
+
+        def _lbl(row):
+            n  = _v(row, col_n)
+            f  = _v(row, col_f)
+            hr = _v(row, col_h)
+            p  = _v(row, col_pat)
+            return n + " · " + f + " " + hr + " · " + p
+
+        opciones = [_lbl(row) for _, row in df_sorted.iterrows()]
+        sel_idx  = st.selectbox("Registro:", opciones, label_visibility="collapsed")
+
+        if sel_idx is not None:
+            i   = opciones.index(sel_idx)
+            row = df_sorted.iloc[i]
+
+            # Fila 1: identificación
+            c1, c2, c3 = st.columns(3)
+            c1.metric("N° Auditoría",    _v(row, col_n))
+            c2.metric("Fecha",           _v(row, col_f))
+            c3.metric("Hora",            _v(row, col_h))
+
+            # Fila 2: vehículo y turno
+            c4, c5, c6 = st.columns(3)
+            c4.metric("Patente",         _v(row, col_pat))
+            c5.metric("Chofer",          _v(row, col_chof))
+            c6.metric("Turno",           _v(row, col_t))
+
+            # Fila 3: movimiento y conteo
+            c7, c8, c9 = st.columns(3)
+            c7.metric("Movimiento",      _v(row, col_mov))
+            c8.metric("Declarado",       _v(row, col_cd))
+            c9.metric("Contado",         _v(row, col_cc))
+
+            # Fila 4: resultado
+            c10, c11, c12 = st.columns(3)
+            c10.metric("Diferencia",     _v(row, col_dif))
+            c11.metric("Estado",         _v(row, col_est))
+            c12.metric("Auditado Por",   _v(row, col_aud))
+
+            # Observaciones
+            obs = _v(row, col_obs)
+            if obs != "—":
+                st.info("📝 Observaciones: " + obs)
+
+            # Accesorios / materiales secundarios
+            acc_labels = [
+                ("Diagonales",      col_diag),
+                ("Amarras 3.0m",    col_am30),
+                ("Amarras 1.5m",    col_am15),
+                ("Plataformas",     col_plat),
+                ("Tablones",        col_tabl),
+                ("Bases/Niveladores", col_base),
+                ("Abrazaderas",     col_abra),
+            ]
+            acc_parts = []
+            for lbl_a, col_a in acc_labels:
+                v = _v(row, col_a)
+                if v not in ("—", "0", ""):
+                    acc_parts.append(lbl_a + ": " + v)
+            if acc_parts:
+                st.success("🔩 Accesorios registrados — " + " · ".join(acc_parts))
+            else:
+                st.caption("Sin accesorios registrados en esta auditoría.")
+
+        st.markdown("---")
+
+        # ── Tabla completa ────────────────────────────────────────────────────
+        st.markdown(
+            "<div style='color:" + COL_CIAN + ";font-weight:700;margin-bottom:8px;'>"
+            "📋 Todos los registros</div>",
+            unsafe_allow_html=True
+        )
+        cols_ocultar = {c for c in [col_aud, col_diag, col_am30, col_am15,
+                                     col_plat, col_tabl, col_base, col_abra] if c}
+        cols_mostrar = [c for c in df.columns if c not in cols_ocultar and not c.startswith("_")]
+        st.dataframe(
+            df_sorted[cols_mostrar] if col_f else df[cols_mostrar],
+            use_container_width=True, hide_index=True
+        )
 
         # ── Gráficos ─────────────────────────────────────────────────────────
         st.markdown("<br>", unsafe_allow_html=True)
         g1, g2 = st.columns(2)
-        col_pat  = next((c for c in df.columns if "patente" in c.lower()), None)
-        col_chof = next((c for c in df.columns if "chofer" in c.lower()), None)
-        col_mov  = next((c for c in df.columns if "movimiento" in c.lower()), None)
 
         with g1:
-            st.markdown("<div style='color:" + COL_CIAN + ";font-weight:600;margin-bottom:6px;'>Por patente</div>", unsafe_allow_html=True)
+            st.markdown(
+                "<div style='color:" + COL_CIAN + ";font-weight:600;margin-bottom:6px;'>"
+                "Estado de auditorías</div>", unsafe_allow_html=True
+            )
+            d = df["_est"].value_counts().reset_index()
+            d.columns = ["Estado", "N"]
+            st.bar_chart(d.set_index("Estado"))
+
+        with g2:
+            st.markdown(
+                "<div style='color:" + COL_CIAN + ";font-weight:600;margin-bottom:6px;'>"
+                "Salidas vs Devoluciones</div>", unsafe_allow_html=True
+            )
+            if col_mov:
+                d = df[col_mov].value_counts().reset_index()
+                d.columns = ["Tipo", "N"]
+                st.bar_chart(d.set_index("Tipo"), color=COL_CIAN)
+            else:
+                st.caption("Sin datos de movimiento")
+
+        g3, g4 = st.columns(2)
+        with g3:
+            st.markdown(
+                "<div style='color:" + COL_CIAN + ";font-weight:600;margin-bottom:6px;'>"
+                "Auditorías por patente</div>", unsafe_allow_html=True
+            )
             if col_pat:
                 d = df[col_pat].value_counts().reset_index()
-                d.columns = ["Patente","N"]
+                d.columns = ["Patente", "N"]
                 st.bar_chart(d.set_index("Patente"), color=COL_AZUL)
             else:
                 st.caption("Sin datos de patente")
-        with g2:
-            st.markdown("<div style='color:" + COL_CIAN + ";font-weight:600;margin-bottom:6px;'>Por chofer</div>", unsafe_allow_html=True)
+
+        with g4:
+            st.markdown(
+                "<div style='color:" + COL_CIAN + ";font-weight:600;margin-bottom:6px;'>"
+                "Auditorías por chofer</div>", unsafe_allow_html=True
+            )
             if col_chof:
                 d = df[col_chof].value_counts().reset_index()
-                d.columns = ["Chofer","N"]
+                d.columns = ["Chofer", "N"]
                 st.bar_chart(d.set_index("Chofer"), color=COL_AZUL)
             else:
                 st.caption("Sin datos de chofer")
 
-        g3, g4 = st.columns(2)
-        with g3:
-            st.markdown("<div style='color:" + COL_CIAN + ";font-weight:600;margin-bottom:6px;'>Salidas vs Devoluciones</div>", unsafe_allow_html=True)
-            if col_mov:
-                d = df[col_mov].value_counts().reset_index()
-                d.columns = ["Tipo","N"]
-                st.bar_chart(d.set_index("Tipo"), color=COL_CIAN)
-            else:
-                st.caption("Sin datos de movimiento")
-        with g4:
-            st.markdown("<div style='color:" + COL_CIAN + ";font-weight:600;margin-bottom:6px;'>Estado</div>", unsafe_allow_html=True)
-            d = df["Estado"].value_counts().reset_index()
-            d.columns = ["Estado","N"]
-            st.bar_chart(d.set_index("Estado"))
-
         # ── Alertas ───────────────────────────────────────────────────────────
-        alertas = df[df["Estado"].isin(["No Conforme","Revision"])].tail(10)
+        alertas = df[df["_est"].isin(["No Conforme","Revision"])].tail(10)
         if not alertas.empty:
             st.markdown("---")
             st.markdown(
@@ -672,16 +793,16 @@ with tab_dashboard:
             )
             for _, row in alertas.iterrows():
                 try:
-                    dv = int(float(row.get("Diferencia", 0)))
+                    dv = int(float(_v(row, col_dif).replace("—","0")))
                 except Exception:
                     dv = 0
-                estado_r = str(row.get("Estado",""))
+                estado_r = _v(row, col_est)
                 badge    = "badge-alerta" if estado_r == "No Conforme" else "badge-revision"
                 st.markdown(
                     "<div class='audit-row'>"
-                    "<span class='audit-row-label'>" + str(row.get("N° Auditoria","")) + "</span>"
-                    "<span class='audit-row-val'>" + str(row.get("Patente","")) + " · " + str(row.get("Chofer","")) + "</span>"
-                    "<span style='color:#8899BB;'>" + str(row.get("Fecha","")) + " " + str(row.get("Hora","")) + "</span>"
+                    "<span class='audit-row-label'>" + _v(row, col_n) + "</span>"
+                    "<span class='audit-row-val'>" + _v(row, col_pat) + " · " + _v(row, col_chof) + "</span>"
+                    "<span style='color:#8899BB;'>" + _v(row, col_f) + " " + _v(row, col_h) + "</span>"
                     "<span style='color:" + COL_AMARILLO + ";font-weight:700;'>Dif: " + f"{dv:+d}" + "</span>"
                     "<span class='" + badge + "'>" + estado_r + "</span>"
                     "</div>",
