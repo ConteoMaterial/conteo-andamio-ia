@@ -63,6 +63,7 @@
     <button id="zout" class="gray">🔍−</button>
     <span id="zoomlbl">100%</span>
     <button id="zin" class="gray">🔍+</button>
+    <button id="mode" class="gray">☝️ Desplazar</button>
   </div>
 
   <div id="scroller">
@@ -86,7 +87,7 @@ const scroller = document.getElementById("scroller");
 
 const S = {
   src: null, imgEl: null, tipo: "vertical",
-  puntos: [], zoom: 1.0
+  puntos: [], zoom: 1.0, modoDesplazar: false
 };
 
 // ─── Dibujo de marcadores en el canvas (instantáneo, sin servidor) ────────────
@@ -156,7 +157,7 @@ cv.addEventListener("pointermove", function(e){
 });
 cv.addEventListener("pointerup", function(e){
   if (isPanning) return;
-  // coordenada relativa al canvas real (independiente del zoom CSS)
+  if (S.modoDesplazar) return;
   const rect = cv.getBoundingClientRect();
   const x = (e.clientX - rect.left) / rect.width  * cv.width;
   const y = (e.clientY - rect.top)  / rect.height * cv.height;
@@ -177,6 +178,19 @@ document.getElementById("zin").onclick = function(){
 };
 document.getElementById("zout").onclick = function(){
   S.zoom = Math.max(0.5, S.zoom - 0.25); applyZoom();
+};
+document.getElementById("mode").onclick = function(){
+  S.modoDesplazar = !S.modoDesplazar;
+  const btn = document.getElementById("mode");
+  if (S.modoDesplazar){
+    cv.style.touchAction = "pan-x pan-y";
+    btn.textContent = "✏️ Marcar";
+    btn.style.background = "linear-gradient(135deg, #E4902D, #c77a1a)";
+  } else {
+    cv.style.touchAction = "none";
+    btn.textContent = "☝️ Desplazar";
+    btn.style.background = "";
+  }
 };
 
 // ─── Recibir datos desde Python ───────────────────────────────────────────────

@@ -365,6 +365,7 @@ _ss_defaults = {
     "img_orig_v": None, "img_b64_v": None,
     "img_orig_h": None, "img_b64_h": None,
     "guardado": False,
+    "last_audit_id": "", "last_audit_estado": "",
     "s_patente": PATENTES[0], "s_chofer": CHOFERES[0], "s_turno": TURNOS[0],
     "s_tipo_mov": MOVIMIENTOS[0], "s_observaciones": "",
     "upload_counter": 0, "uc_v": 0, "uc_h": 0,
@@ -408,123 +409,24 @@ with tab_auditoria:
     st.session_state["s_tipo_mov"]     = tipo_mov
     st.session_state["s_observaciones"]= observaciones
 
-    st.markdown("---")
+    col_r, _ = st.columns([1, 5])
+    if col_r.button("🔄 Refrescar"):
+        st.rerun()
 
-    # ── Tabs siempre visibles — cada uno carga su propia foto ────────────────
-    tab_v, tab_h, tab_sec = st.tabs([
-        "🔵  Verticales",
-        "🔴  Horizontales / Cabezales",
-        "🔩  Accesorios"
-    ])
-
-    with tab_v:
-        contar_material("vertical")
-
-    with tab_h:
-        contar_material("horizontal")
-
-    with tab_sec:
-        st.markdown(
-            "<div style='color:#00D4FF;font-weight:700;margin-bottom:12px;'>"
-            "🔩 Registro de Materiales Secundarios y Accesorios</div>",
-            unsafe_allow_html=True
-        )
-        st.markdown(
-            "<p style='color:#8899BB;font-size:0.82rem;margin-bottom:14px;'>"
-            "Ingresa la cantidad contada de cada accesorio. "
-            "La foto es opcional como respaldo visual.</p>",
-            unsafe_allow_html=True
-        )
-        for lbl, key in MATERIALES_SEC:
-            st.markdown(
-                "<div style='color:#fff;font-weight:600;margin:10px 0 4px 0;'>"
-                + lbl + "</div>",
-                unsafe_allow_html=True
-            )
-            c1, c2 = st.columns([1, 2])
-            cant_sec = c1.number_input(
-                "Cantidad",
-                min_value=0,
-                value=st.session_state.get("sec_" + key, 0),
-                key="sec_input_" + key,
-                label_visibility="collapsed"
-            )
-            st.session_state["sec_" + key] = cant_sec
-            foto_sec = c2.file_uploader(
-                "Foto",
-                type=["jpg","jpeg","png","webp"],
-                key="sec_foto_" + key + "_" + str(st.session_state.get("upload_counter", 0)),
-                label_visibility="collapsed"
-            )
-            if foto_sec:
-                st.image(foto_sec, width=180)
-            st.markdown("<hr style='border-color:#2D6BE422;margin:8px 0;'>", unsafe_allow_html=True)
-
-    # ── Guardar ──────────────────────────────────────────────────────────────
-    st.markdown("---")
-    total_v         = len(st.session_state["puntos_v"])
-    total_h         = len(st.session_state["puntos_h"])
-    total_contado   = total_v + total_h
-    cant_decl_total = st.session_state.get("decl_v", 0) + st.session_state.get("decl_h", 0)
-    material_label  = "V:" + str(total_v) + " · H:" + str(total_h)
-
-    c1, c2 = st.columns([2, 1])
-    c1.info(
-        "**Contado:** " + str(total_contado) +
-        "  |  **Declarado:** " + str(cant_decl_total) +
-        "  |  **Diferencia:** " + f"{total_contado - cant_decl_total:+d}" +
-        "  |  " + material_label
-    )
-    btn_guardar = c2.button(
-        "✅ Guardar en Sheets",
-        type="primary",
-        disabled=st.session_state["guardado"]
-    )
-
-    if btn_guardar and not st.session_state["guardado"]:
-        with st.spinner("Guardando en Google Sheets..."):
-            try:
-                gc, sheets = get_clients()
-                diff = total_contado - cant_decl_total
-                if cant_decl_total == 0:  estado = "Sin declarar"
-                elif diff == 0:           estado = "Conforme"
-                elif abs(diff) <= 2:      estado = "Revision"
-                else:                     estado = "No Conforme"
-
-                ws    = get_sheet(gc, sheets)
-                n_aud = get_next_audit_number(ws)
-                ahora = datetime.datetime.now(ZoneInfo("America/Santiago"))
-
-                guardar_en_sheets(gc, {
-                    "n_auditoria":    n_aud,
-                    "fecha":          ahora.strftime("%Y-%m-%d"),
-                    "hora":           ahora.strftime("%H:%M:%S"),
-                    "turno":          st.session_state["s_turno"],
-                    "patente":        st.session_state["s_patente"],
-                    "chofer":         st.session_state["s_chofer"],
-                    "tipo_movimiento":st.session_state["s_tipo_mov"],
-                    "material":       material_label,
-                    "cant_declarada": cant_decl_total,
-                    "cant_contada":   total_contado,
-                    "diferencia":     diff,
-                    "estado":         estado,
-                    "observaciones":  st.session_state["s_observaciones"],
-                    "auditado_por":   "Richard Gonzalez",
-                    **{k: st.session_state.get("sec_" + k, 0) for _, k in MATERIALES_SEC},
-                })
-
-                st.session_state["guardado"] = True
-                st.success("✅ Auditoría **" + n_aud + "** guardada · Estado: **" + estado + "**")
-            except Exception as e:
-                st.error("Error al guardar: " + str(e))
-
+    # ── Pantalla post-guardado ────────────────────────────────────────────────
     if st.session_state["guardado"]:
-        if st.button("🔄 Nueva auditoría"):
+        n_id  = st.session_state.get("last_audit_id", "")
+        n_est = st.session_state.get("last_audit_estado", "")
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.success("✅ Auditoría **" + n_id + "** guardada · Estado: **" + n_est + "**")
+        st.markdown("<br>", unsafe_allow_html=True)
+        if st.button("🔄 Nueva auditoría", type="primary", use_container_width=True):
             _reset = {
                 "puntos_v": [], "puntos_h": [],
                 "img_orig_v": None, "img_b64_v": None,
                 "img_orig_h": None, "img_b64_h": None,
                 "guardado": False,
+                "last_audit_id": "", "last_audit_estado": "",
                 "upload_counter": st.session_state.get("upload_counter", 0) + 1,
                 "uc_v": st.session_state.get("uc_v", 0) + 1,
                 "uc_h": st.session_state.get("uc_h", 0) + 1,
@@ -533,6 +435,116 @@ with tab_auditoria:
                 _reset["sec_" + _k] = 0
             st.session_state.update(_reset)
             st.rerun()
+
+    else:
+        st.markdown("---")
+
+        # ── Tabs — cada uno carga su propia foto ─────────────────────────────
+        tab_v, tab_h, tab_sec = st.tabs([
+            "🔵  Verticales",
+            "🔴  Horizontales / Cabezales",
+            "🔩  Accesorios"
+        ])
+
+        with tab_v:
+            contar_material("vertical")
+
+        with tab_h:
+            contar_material("horizontal")
+
+        with tab_sec:
+            st.markdown(
+                "<div style='color:#00D4FF;font-weight:700;margin-bottom:12px;'>"
+                "🔩 Registro de Materiales Secundarios y Accesorios</div>",
+                unsafe_allow_html=True
+            )
+            st.markdown(
+                "<p style='color:#8899BB;font-size:0.82rem;margin-bottom:14px;'>"
+                "Ingresa la cantidad contada de cada accesorio. "
+                "La foto es opcional como respaldo visual.</p>",
+                unsafe_allow_html=True
+            )
+            for lbl, key in MATERIALES_SEC:
+                st.markdown(
+                    "<div style='color:#fff;font-weight:600;margin:10px 0 4px 0;'>"
+                    + lbl + "</div>",
+                    unsafe_allow_html=True
+                )
+                c1, c2 = st.columns([1, 2])
+                cant_sec = c1.number_input(
+                    "Cantidad",
+                    min_value=0,
+                    value=st.session_state.get("sec_" + key, 0),
+                    key="sec_input_" + key,
+                    label_visibility="collapsed"
+                )
+                st.session_state["sec_" + key] = cant_sec
+                foto_sec = c2.file_uploader(
+                    "Foto",
+                    type=["jpg","jpeg","png","webp"],
+                    key="sec_foto_" + key + "_" + str(st.session_state.get("upload_counter", 0)),
+                    label_visibility="collapsed"
+                )
+                if foto_sec:
+                    st.image(foto_sec, width=180)
+                st.markdown("<hr style='border-color:#2D6BE422;margin:8px 0;'>", unsafe_allow_html=True)
+
+        # ── Guardar ──────────────────────────────────────────────────────────
+        st.markdown("---")
+        st.caption("Un solo Guardar registra todo: Verticales + Horizontales + Accesorios.")
+        total_v         = len(st.session_state["puntos_v"])
+        total_h         = len(st.session_state["puntos_h"])
+        total_contado   = total_v + total_h
+        cant_decl_total = st.session_state.get("decl_v", 0) + st.session_state.get("decl_h", 0)
+        material_label  = "V:" + str(total_v) + " · H:" + str(total_h)
+
+        c1, c2 = st.columns([2, 1])
+        c1.info(
+            "**Contado:** " + str(total_contado) +
+            "  |  **Declarado:** " + str(cant_decl_total) +
+            "  |  **Diferencia:** " + f"{total_contado - cant_decl_total:+d}" +
+            "  |  " + material_label
+        )
+        btn_guardar = c2.button("✅ Guardar todo", type="primary")
+
+        if btn_guardar:
+            with st.spinner("Guardando en Google Sheets..."):
+                try:
+                    gc, sheets = get_clients()
+                    diff = total_contado - cant_decl_total
+                    if cant_decl_total == 0:  estado = "Sin declarar"
+                    elif diff == 0:           estado = "Conforme"
+                    elif abs(diff) <= 2:      estado = "Revision"
+                    else:                     estado = "No Conforme"
+
+                    ws    = get_sheet(gc, sheets)
+                    n_aud = get_next_audit_number(ws)
+                    ahora = datetime.datetime.now(ZoneInfo("America/Santiago"))
+
+                    guardar_en_sheets(gc, {
+                        "n_auditoria":    n_aud,
+                        "fecha":          ahora.strftime("%Y-%m-%d"),
+                        "hora":           ahora.strftime("%H:%M:%S"),
+                        "turno":          st.session_state["s_turno"],
+                        "patente":        st.session_state["s_patente"],
+                        "chofer":         st.session_state["s_chofer"],
+                        "tipo_movimiento":st.session_state["s_tipo_mov"],
+                        "material":       material_label,
+                        "cant_declarada": cant_decl_total,
+                        "cant_contada":   total_contado,
+                        "diferencia":     diff,
+                        "estado":         estado,
+                        "observaciones":  st.session_state["s_observaciones"],
+                        "auditado_por":   "Richard Gonzalez",
+                        **{k: st.session_state.get("sec_" + k, 0) for _, k in MATERIALES_SEC},
+                    })
+
+                    st.session_state["guardado"]          = True
+                    st.session_state["last_audit_id"]     = n_aud
+                    st.session_state["last_audit_estado"] = estado
+                    st.rerun()
+                except Exception as e:
+                    st.error("Error al guardar: " + str(e))
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 2 — DASHBOARD
