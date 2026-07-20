@@ -538,6 +538,8 @@ with tab_auditoria:
         btn_guardar = c2.button("✅ Guardar todo", type="primary")
 
         if btn_guardar:
+            _ok = False
+            _err = ""
             with st.spinner("Guardando registro y subiendo fotos..."):
                 try:
                     gc, sheets = get_clients()
@@ -552,7 +554,6 @@ with tab_auditoria:
                     ahora = datetime.datetime.now(ZoneInfo("America/Santiago"))
                     ts    = ahora.strftime("%Y%m%d_%H%M%S")
 
-                    # Subir fotos a Supabase (si existen)
                     foto_v_url = ""
                     foto_h_url = ""
                     if st.session_state.get("img_orig_v") is not None:
@@ -589,9 +590,14 @@ with tab_auditoria:
                     st.session_state["guardado"]          = True
                     st.session_state["last_audit_id"]     = n_aud
                     st.session_state["last_audit_estado"] = estado
-                    st.rerun()
+                    _ok = True
                 except Exception as e:
-                    st.error("Error al guardar: " + str(e))
+                    _err = repr(e)
+
+            if _ok:
+                st.rerun()
+            elif _err:
+                st.error("Error al guardar: " + _err)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 2 — DASHBOARD
