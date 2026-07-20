@@ -4,7 +4,7 @@ from PIL import Image, ImageOps
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from googleapiclient.discovery import build
-from supabase import create_client
+import requests as _requests
 import datetime
 from zoneinfo import ZoneInfo
 import io
@@ -131,25 +131,26 @@ def get_clients():
 # ─── SUPABASE STORAGE (fotos de auditoría) ────────────────────────────────────
 SUPA_BUCKET = "AuditoriaFotos"
 
-@st.cache_resource
-def get_supabase():
-    return create_client(
-        st.secrets["supabase"]["url"],
-        st.secrets["supabase"]["key"],
-    )
-
 def subir_foto_supabase(img_pil, nombre_archivo):
     try:
-        supa = get_supabase()
-        buf  = io.BytesIO()
+        buf = io.BytesIO()
         img_pil.save(buf, format="JPEG", quality=85)
-        supa.storage.from_(SUPA_BUCKET).upload(
-            path=nombre_archivo,
-            file=buf.getvalue(),
-            file_options={"content-type": "image/jpeg", "upsert": "true"},
+        supa_url = st.secrets["supabase"]["url"]
+        supa_key = st.secrets["supabase"]["key"]
+        upload_url = supa_url + "/storage/v1/object/" + SUPA_BUCKET + "/" + nombre_archivo
+        resp = _requests.post(
+            upload_url,
+            data=buf.getvalue(),
+            headers={
+                "Authorization": "Bearer " + supa_key,
+                "Content-Type":  "image/jpeg",
+                "x-upsert":      "true",
+            },
+            timeout=15,
         )
-        url = st.secrets["supabase"]["url"]
-        return url + "/storage/v1/object/public/" + SUPA_BUCKET + "/" + nombre_archivo
+        if resp.status_code in (200, 201):
+            return supa_url + "/storage/v1/object/public/" + SUPA_BUCKET + "/" + nombre_archivo
+        return ""
     except Exception:
         return ""
 
@@ -439,6 +440,7 @@ with tab_auditoria:
 
     col_r, _ = st.columns([1, 5])
     if col_r.button("🔄 Refrescar"):
+        st.cache_resource.clear()
         st.rerun()
 
     # ── Pantalla post-guardado ────────────────────────────────────────────────
