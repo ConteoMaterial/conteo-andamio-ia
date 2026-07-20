@@ -541,58 +541,62 @@ with tab_auditoria:
             _ok = False
             _err = ""
             with st.spinner("Guardando registro y subiendo fotos..."):
-                try:
-                    gc, sheets = get_clients()
-                    diff = total_contado - cant_decl_total
-                    if cant_decl_total == 0:  estado = "Sin declarar"
-                    elif diff == 0:           estado = "Conforme"
-                    elif abs(diff) <= 2:      estado = "Revision"
-                    else:                     estado = "No Conforme"
+                for _intento in range(2):
+                    try:
+                        if _intento == 1:
+                            st.cache_resource.clear()
+                        gc, sheets = get_clients()
+                        diff = total_contado - cant_decl_total
+                        if cant_decl_total == 0:  estado = "Sin declarar"
+                        elif diff == 0:           estado = "Conforme"
+                        elif abs(diff) <= 2:      estado = "Revision"
+                        else:                     estado = "No Conforme"
 
-                    ws    = get_sheet(gc, sheets)
-                    n_aud = get_next_audit_number(ws)
-                    ahora = datetime.datetime.now(ZoneInfo("America/Santiago"))
-                    ts    = ahora.strftime("%Y%m%d_%H%M%S")
+                        ws    = get_sheet(gc, sheets)
+                        n_aud = get_next_audit_number(ws)
+                        ahora = datetime.datetime.now(ZoneInfo("America/Santiago"))
+                        ts    = ahora.strftime("%Y%m%d_%H%M%S")
 
-                    foto_v_url = ""
-                    foto_h_url = ""
-                    if st.session_state.get("img_orig_v") is not None:
-                        foto_v_url = subir_foto_supabase(
-                            st.session_state["img_orig_v"],
-                            n_aud + "_V_" + ts + ".jpg"
-                        )
-                    if st.session_state.get("img_orig_h") is not None:
-                        foto_h_url = subir_foto_supabase(
-                            st.session_state["img_orig_h"],
-                            n_aud + "_H_" + ts + ".jpg"
-                        )
+                        foto_v_url = ""
+                        foto_h_url = ""
+                        if st.session_state.get("img_orig_v") is not None:
+                            foto_v_url = subir_foto_supabase(
+                                st.session_state["img_orig_v"],
+                                n_aud + "_V_" + ts + ".jpg"
+                            )
+                        if st.session_state.get("img_orig_h") is not None:
+                            foto_h_url = subir_foto_supabase(
+                                st.session_state["img_orig_h"],
+                                n_aud + "_H_" + ts + ".jpg"
+                            )
 
-                    guardar_en_sheets(gc, {
-                        "n_auditoria":    n_aud,
-                        "fecha":          ahora.strftime("%Y-%m-%d"),
-                        "hora":           ahora.strftime("%H:%M:%S"),
-                        "turno":          st.session_state["s_turno"],
-                        "patente":        st.session_state["s_patente"],
-                        "chofer":         st.session_state["s_chofer"],
-                        "tipo_movimiento":st.session_state["s_tipo_mov"],
-                        "material":       material_label,
-                        "cant_declarada": cant_decl_total,
-                        "cant_contada":   total_contado,
-                        "diferencia":     diff,
-                        "estado":         estado,
-                        "observaciones":  st.session_state["s_observaciones"],
-                        "auditado_por":   "Richard Gonzalez",
-                        "foto_v":         foto_v_url,
-                        "foto_h":         foto_h_url,
-                        **{k: st.session_state.get("sec_" + k, 0) for _, k in MATERIALES_SEC},
-                    })
+                        guardar_en_sheets(gc, {
+                            "n_auditoria":    n_aud,
+                            "fecha":          ahora.strftime("%Y-%m-%d"),
+                            "hora":           ahora.strftime("%H:%M:%S"),
+                            "turno":          st.session_state["s_turno"],
+                            "patente":        st.session_state["s_patente"],
+                            "chofer":         st.session_state["s_chofer"],
+                            "tipo_movimiento":st.session_state["s_tipo_mov"],
+                            "material":       material_label,
+                            "cant_declarada": cant_decl_total,
+                            "cant_contada":   total_contado,
+                            "diferencia":     diff,
+                            "estado":         estado,
+                            "observaciones":  st.session_state["s_observaciones"],
+                            "auditado_por":   "Richard Gonzalez",
+                            "foto_v":         foto_v_url,
+                            "foto_h":         foto_h_url,
+                            **{k: st.session_state.get("sec_" + k, 0) for _, k in MATERIALES_SEC},
+                        })
 
-                    st.session_state["guardado"]          = True
-                    st.session_state["last_audit_id"]     = n_aud
-                    st.session_state["last_audit_estado"] = estado
-                    _ok = True
-                except Exception as e:
-                    _err = repr(e)
+                        st.session_state["guardado"]          = True
+                        st.session_state["last_audit_id"]     = n_aud
+                        st.session_state["last_audit_estado"] = estado
+                        _ok = True
+                        break
+                    except Exception as e:
+                        _err = repr(e)
 
             if _ok:
                 st.rerun()
@@ -607,7 +611,9 @@ with tab_dashboard:
 
     col_act, _ = st.columns([1, 3])
     if col_act.button("🔄 Actualizar datos"):
-        st.cache_resource.clear()
+        with st.spinner("Actualizando..."):
+            st.cache_resource.clear()
+        st.toast("Datos actualizados", icon="✅")
         st.rerun()
 
     # ── Cargar historial ─────────────────────────────────────────────────────
