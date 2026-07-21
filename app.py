@@ -2,7 +2,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 from PIL import Image, ImageOps
 import gspread
-from oauth2client.service_account import ServiceAccountCredentials
+import rsa as _rsa
 import requests as _requests
 import datetime
 from zoneinfo import ZoneInfo
@@ -115,15 +115,45 @@ st.markdown(f"""
 
 # ─── GOOGLE AUTH ──────────────────────────────────────────────────────────────
 def get_clients():
-    creds_dict = dict(st.secrets["gcp_service_account"])
-    scope = [
-        "https://spreadsheets.google.com/feeds",
-        "https://www.googleapis.com/auth/drive",
-        "https://www.googleapis.com/auth/spreadsheets",
-    ]
-    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-    gc    = gspread.authorize(creds)
-    return gc, None  # build() eliminado: usaba httplib2 → EndOfStreamError
+    import json as _json, base64 as _b64, time as _time
+    raw = dict(st.secrets["gcp_service_account"])
+
+    # Parsear la clave con rsa (misma tolerancia que oauth2client, sin httplib2)
+    pk_pem = raw.get("private_key", "").replace("\\n", "\n")
+    pk = _rsa.PrivateKey.load_pkcs1_openssl_pem(pk_pem.encode())
+
+    # Construir JWT manualmente
+    def _enc(obj):
+        return _b64.urlsafe_b64encode(
+            _json.dumps(obj, separators=(",", ":")).encode()
+        ).rstrip(b"=").decode()
+
+    now  = int(_time.time())
+    body = (_enc({"alg": "RS256", "typ": "JWT"}) + "." + _enc({
+        "iss": raw["client_email"], "sub": raw["client_email"],
+        "aud": "https://oauth2.googleapis.com/token",
+        "iat": now, "exp": now + 3600,
+        "scope": ("https://spreadsheets.google.com/feeds "
+                  "https://www.googleapis.com/auth/spreadsheets "
+                  "https://www.googleapis.com/auth/drive"),
+    }))
+    sig = _rsa.sign(body.encode(), pk, "SHA-256")
+    jwt = body + "." + _b64.urlsafe_b64encode(sig).rstrip(b"=").decode()
+
+    # Intercambiar JWT por token usando requests (SIN httplib2)
+    r = _requests.post(
+        "https://oauth2.googleapis.com/token",
+        data={"grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer", "assertion": jwt},
+        timeout=15,
+    )
+    r.raise_for_status()
+    token = r.json()["access_token"]
+
+    # gspread con requests.Session puro (SIN httplib2 → sin EndOfStreamError)
+    sess = _requests.Session()
+    sess.headers["Authorization"] = "Bearer " + token
+    gc = gspread.Client(auth=sess)
+    return gc, None
 
 # ─── SUPABASE STORAGE (fotos de auditoría) ────────────────────────────────────
 SUPA_BUCKET = "AuditoriaFotos"

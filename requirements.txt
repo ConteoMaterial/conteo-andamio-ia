@@ -1,6 +1,6 @@
 streamlit
 gspread
-oauth2client
+rsa
 google-api-python-client
 Pillow
 pandas
