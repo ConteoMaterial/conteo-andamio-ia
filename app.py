@@ -2,7 +2,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 from PIL import Image, ImageOps
 import gspread
-import rsa as _rsa
+from OpenSSL import crypto as _ossl
 import requests as _requests
 import datetime
 from zoneinfo import ZoneInfo
@@ -118,9 +118,9 @@ def get_clients():
     import json as _json, base64 as _b64, time as _time
     raw = dict(st.secrets["gcp_service_account"])
 
-    # Parsear la clave con rsa (misma tolerancia que oauth2client, sin httplib2)
-    pk_pem = raw.get("private_key", "").replace("\\n", "\n")
-    pk = _rsa.PrivateKey.load_pkcs1_openssl_pem(pk_pem.encode())
+    # Parsear con pyOpenSSL: es lo que oauth2client usa internamente, muy tolerante
+    pk_pem = raw.get("private_key", "").replace("\\n", "\n").strip().encode("utf-8")
+    pk = _ossl.load_privatekey(_ossl.FILETYPE_PEM, pk_pem)
 
     # Construir JWT manualmente
     def _enc(obj):
@@ -137,7 +137,7 @@ def get_clients():
                   "https://www.googleapis.com/auth/spreadsheets "
                   "https://www.googleapis.com/auth/drive"),
     }))
-    sig = _rsa.sign(body.encode(), pk, "SHA-256")
+    sig = _ossl.sign(pk, body.encode("utf-8"), b"sha256")
     jwt = body + "." + _b64.urlsafe_b64encode(sig).rstrip(b"=").decode()
 
     # Intercambiar JWT por token usando requests (SIN httplib2)

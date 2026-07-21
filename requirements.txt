@@ -1,6 +1,6 @@
 streamlit
 gspread
-rsa
+pyOpenSSL
 google-api-python-client
 Pillow
 pandas
