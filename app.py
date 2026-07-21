@@ -2,8 +2,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 from PIL import Image, ImageOps
 import gspread
-from google.oauth2.service_account import Credentials
-from google.auth.transport.requests import AuthorizedSession
+from oauth2client.service_account import ServiceAccountCredentials
 import requests as _requests
 import datetime
 from zoneinfo import ZoneInfo
@@ -116,36 +115,15 @@ st.markdown(f"""
 
 # ─── GOOGLE AUTH ──────────────────────────────────────────────────────────────
 def get_clients():
-    import json, re
-    creds_dict = json.loads(json.dumps(dict(st.secrets["gcp_service_account"])))
-
-    # Limpiar la clave privada línea a línea:
-    # - normalizar \n literales
-    # - dentro del body PEM, eliminar cualquier carácter que no sea base64 válido
-    pk = creds_dict.get("private_key", "")
-    pk = pk.replace("\\n", "\n")
-    cleaned = []
-    in_body = False
-    for line in pk.split("\n"):
-        if line.startswith("-----BEGIN"):
-            in_body = True
-            cleaned.append(line)
-        elif line.startswith("-----END"):
-            in_body = False
-            cleaned.append(line)
-        elif in_body:
-            cleaned.append(re.sub(r"[^A-Za-z0-9+/=]", "", line))
-    creds_dict["private_key"] = "\n".join(cleaned) + "\n"
-
+    creds_dict = dict(st.secrets["gcp_service_account"])
     scope = [
         "https://spreadsheets.google.com/feeds",
         "https://www.googleapis.com/auth/drive",
         "https://www.googleapis.com/auth/spreadsheets",
     ]
-    creds     = Credentials.from_service_account_info(creds_dict, scopes=scope)
-    gc        = gspread.Client(auth=creds)
-    gc.session = AuthorizedSession(creds)   # requests, NO httplib2 → sin EndOfStreamError
-    return gc, None                         # sheets_service no necesario, sheet ya existe
+    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+    gc    = gspread.authorize(creds)
+    return gc, None  # build() eliminado: usaba httplib2 → EndOfStreamError
 
 # ─── SUPABASE STORAGE (fotos de auditoría) ────────────────────────────────────
 SUPA_BUCKET = "AuditoriaFotos"
