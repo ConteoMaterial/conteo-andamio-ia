@@ -2,7 +2,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 from PIL import Image, ImageOps
 import gspread
-from OpenSSL import crypto as _ossl
+from oauth2client.service_account import ServiceAccountCredentials
 import requests as _requests
 import datetime
 from zoneinfo import ZoneInfo
@@ -115,41 +115,30 @@ st.markdown(f"""
 
 # ─── GOOGLE AUTH ──────────────────────────────────────────────────────────────
 def get_clients():
-    import json as _json, base64 as _b64, time as _time
-    raw = dict(st.secrets["gcp_service_account"])
+    creds_dict = dict(st.secrets["gcp_service_account"])
+    scope = [
+        "https://spreadsheets.google.com/feeds",
+        "https://www.googleapis.com/auth/drive",
+        "https://www.googleapis.com/auth/spreadsheets",
+    ]
+    # oauth2client parsea la clave (funciona con el formato del usuario)
+    # y genera el JWT firmado internamente
+    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+    assertion = creds._generate_assertion()
 
-    # Parsear con pyOpenSSL: es lo que oauth2client usa internamente, muy tolerante
-    pk_pem = raw.get("private_key", "").replace("\\n", "\n").strip().encode("utf-8")
-    pk = _ossl.load_privatekey(_ossl.FILETYPE_PEM, pk_pem)
-
-    # Construir JWT manualmente
-    def _enc(obj):
-        return _b64.urlsafe_b64encode(
-            _json.dumps(obj, separators=(",", ":")).encode()
-        ).rstrip(b"=").decode()
-
-    now  = int(_time.time())
-    body = (_enc({"alg": "RS256", "typ": "JWT"}) + "." + _enc({
-        "iss": raw["client_email"], "sub": raw["client_email"],
-        "aud": "https://oauth2.googleapis.com/token",
-        "iat": now, "exp": now + 3600,
-        "scope": ("https://spreadsheets.google.com/feeds "
-                  "https://www.googleapis.com/auth/spreadsheets "
-                  "https://www.googleapis.com/auth/drive"),
-    }))
-    sig = _ossl.sign(pk, body.encode("utf-8"), b"sha256")
-    jwt = body + "." + _b64.urlsafe_b64encode(sig).rstrip(b"=").decode()
-
-    # Intercambiar JWT por token usando requests (SIN httplib2)
+    # Intercambiar JWT por token usando requests (SIN httplib2 → sin EndOfStreamError)
     r = _requests.post(
         "https://oauth2.googleapis.com/token",
-        data={"grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer", "assertion": jwt},
+        data={
+            "assertion": assertion,
+            "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
+        },
         timeout=15,
     )
     r.raise_for_status()
     token = r.json()["access_token"]
 
-    # gspread con requests.Session puro (SIN httplib2 → sin EndOfStreamError)
+    # gspread con requests.Session puro (SIN httplib2)
     sess = _requests.Session()
     sess.headers["Authorization"] = "Bearer " + token
     gc = gspread.Client(auth=sess)
