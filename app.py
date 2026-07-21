@@ -117,7 +117,10 @@ st.markdown(f"""
 # ─── GOOGLE AUTH ──────────────────────────────────────────────────────────────
 @st.cache_resource(ttl=2700)  # renovar cada 45 min
 def get_clients():
-    creds_dict = dict(st.secrets["gcp_service_account"])
+    import json
+    # json.loads(json.dumps(...)) convierte AttrDict de Streamlit a dict Python puro
+    # evita InvalidByte/PEM errors con google-auth
+    creds_dict = json.loads(json.dumps(dict(st.secrets["gcp_service_account"])))
     scope = [
         "https://spreadsheets.google.com/feeds",
         "https://www.googleapis.com/auth/drive",
@@ -441,8 +444,10 @@ with tab_auditoria:
     col_r, _ = st.columns([1, 5])
     if col_r.button("🔃 Recargar"):
         st.cache_resource.clear()
-        st.toast("Conexión renovada", icon="✅")
-        st.rerun(scope="app")
+        components.html(
+            "<script>window.parent.location.reload();</script>",
+            height=0
+        )
 
     # ── Pantalla post-guardado ────────────────────────────────────────────────
     if st.session_state["guardado"]:
@@ -612,10 +617,11 @@ with tab_dashboard:
 
     col_act, _ = st.columns([1, 3])
     if col_act.button("🔄 Actualizar datos"):
-        with st.spinner("Actualizando..."):
-            st.cache_resource.clear()
-        st.toast("Datos actualizados", icon="✅")
-        st.rerun()
+        st.cache_resource.clear()
+        components.html(
+            "<script>window.parent.location.reload();</script>",
+            height=0
+        )
 
     # ── Cargar historial ─────────────────────────────────────────────────────
     try:
