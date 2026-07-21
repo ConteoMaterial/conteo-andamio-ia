@@ -2,7 +2,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 from PIL import Image, ImageOps
 import gspread
-from oauth2client.service_account import ServiceAccountCredentials
+from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 import requests as _requests
 import datetime
@@ -115,7 +115,7 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 # ─── GOOGLE AUTH ──────────────────────────────────────────────────────────────
-@st.cache_resource
+@st.cache_resource(ttl=2700)  # renovar cada 45 min
 def get_clients():
     creds_dict = dict(st.secrets["gcp_service_account"])
     scope = [
@@ -123,7 +123,7 @@ def get_clients():
         "https://www.googleapis.com/auth/drive",
         "https://www.googleapis.com/auth/spreadsheets",
     ]
-    creds  = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+    creds  = Credentials.from_service_account_info(creds_dict, scopes=scope)
     gc     = gspread.authorize(creds)
     sheets = build("sheets", "v4", credentials=creds)
     return gc, sheets
@@ -439,9 +439,10 @@ with tab_auditoria:
     st.session_state["s_observaciones"]= observaciones
 
     col_r, _ = st.columns([1, 5])
-    if col_r.button("🔄 Refrescar"):
+    if col_r.button("🔃 Recargar"):
         st.cache_resource.clear()
-        st.rerun()
+        st.toast("Conexión renovada", icon="✅")
+        st.rerun(scope="app")
 
     # ── Pantalla post-guardado ────────────────────────────────────────────────
     if st.session_state["guardado"]:
