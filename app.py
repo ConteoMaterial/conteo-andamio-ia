@@ -116,13 +116,19 @@ st.markdown(f"""
 # ─── GOOGLE AUTH ──────────────────────────────────────────────────────────────
 def get_clients():
     creds_dict = dict(st.secrets["gcp_service_account"])
+
+    # La clave tiene caracteres no-ASCII en el contenido base64 → limpiarlos
+    pk = creds_dict.get("private_key", "")
+    pk = pk.replace("\\n", "\n")              # literal \n → salto de línea real
+    pk = "".join(c for c in pk if ord(c) < 128)  # eliminar todo carácter no-ASCII
+    creds_dict = dict(creds_dict)
+    creds_dict["private_key"] = pk
+
     scope = [
         "https://spreadsheets.google.com/feeds",
         "https://www.googleapis.com/auth/drive",
         "https://www.googleapis.com/auth/spreadsheets",
     ]
-    # oauth2client parsea la clave (funciona con el formato del usuario)
-    # y genera el JWT firmado internamente
     creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
     assertion = creds._generate_assertion()
 
