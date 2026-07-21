@@ -2,7 +2,8 @@ import streamlit as st
 import streamlit.components.v1 as components
 from PIL import Image, ImageOps
 import gspread
-from oauth2client.service_account import ServiceAccountCredentials
+from google.oauth2.service_account import Credentials
+from google.auth.transport.requests import AuthorizedSession
 from googleapiclient.discovery import build
 import requests as _requests
 import datetime
@@ -116,14 +117,25 @@ st.markdown(f"""
 
 # ─── GOOGLE AUTH ──────────────────────────────────────────────────────────────
 def get_clients():
-    creds_dict = dict(st.secrets["gcp_service_account"])
+    import json, re
+    creds_dict = json.loads(json.dumps(dict(st.secrets["gcp_service_account"])))
+
+    # Limpiar la clave privada: quitar caracteres inválidos al inicio y normalizar saltos de línea
+    pk = creds_dict.get("private_key", "")
+    pk = pk.replace("\\n", "\n")          # literal \n → salto de línea real
+    m  = re.search(r"-----BEGIN", pk)
+    if m:
+        pk = pk[m.start():]               # quitar cualquier basura antes del encabezado PEM
+    creds_dict["private_key"] = pk
+
     scope = [
         "https://spreadsheets.google.com/feeds",
         "https://www.googleapis.com/auth/drive",
         "https://www.googleapis.com/auth/spreadsheets",
     ]
-    creds  = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-    gc     = gspread.authorize(creds)
+    creds  = Credentials.from_service_account_info(creds_dict, scopes=scope)
+    gc     = gspread.Client(auth=creds)
+    gc.session = AuthorizedSession(creds)   # requests, NO httplib2 → sin EndOfStreamError
     sheets = build("sheets", "v4", credentials=creds)
     return gc, sheets
 
