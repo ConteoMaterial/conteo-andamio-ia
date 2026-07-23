@@ -605,18 +605,16 @@ with tab_auditoria:
 # ══════════════════════════════════════════════════════════════════════════════
 with tab_dashboard:
     import pandas as pd
+    import re as _re
 
-    col_act, _ = st.columns([1, 3])
-    if col_act.button("🔄 Actualizar datos"):
-        components.html(
-            "<script>window.parent.location.reload();</script>",
-            height=0
-        )
+    col_act, _ = st.columns([1, 5])
+    if col_act.button("🔄 Actualizar datos", use_container_width=True):
+        st.rerun()
 
     # ── Cargar historial ─────────────────────────────────────────────────────
     try:
-        gc, _ = get_clients()
-        historial = cargar_historial(gc)
+        _gc2, _ = get_clients()
+        historial = cargar_historial(_gc2)
     except Exception as e:
         st.error("No se pudo cargar el historial: " + str(e))
         historial = []
@@ -627,7 +625,6 @@ with tab_dashboard:
         df = pd.DataFrame(historial)
         df.columns = [c.strip() for c in df.columns]
 
-        # ── Búsqueda de columnas insensible a mayúsculas y variaciones ───────
         def _fc(df, *names):
             low = {c.strip().lower(): c for c in df.columns}
             for name in names:
@@ -645,7 +642,13 @@ with tab_dashboard:
             if not col or col not in row.index:
                 return "—"
             v = str(row[col])
-            return v if v not in ("nan","None","") else "—"
+            return v if v not in ("nan", "None", "") else "—"
+
+        def _int(row, col):
+            try:
+                return int(float(_v(row, col).replace("—", "0")))
+            except Exception:
+                return 0
 
         col_n    = _fc(df, "N° Auditoria", "auditoria", "n auditoria")
         col_f    = _fc(df, "Fecha")
@@ -661,154 +664,257 @@ with tab_dashboard:
         col_est  = _fc(df, "Estado")
         col_obs  = _fc(df, "Observaciones")
         col_aud  = _fc(df, "Auditado Por", "Auditado")
-        col_diag  = _fc(df, "Diagonales")
-        col_am30  = _fc(df, "Amarras 3.0m", "Amarras 3")
-        col_am15  = _fc(df, "Amarras 1.5m", "Amarras 1")
-        col_plat  = _fc(df, "Plataformas")
-        col_tabl  = _fc(df, "Tablones")
-        col_base  = _fc(df, "Bases", "Niveladores")
-        col_abra  = _fc(df, "Abrazaderas")
+        col_diag = _fc(df, "Diagonales")
+        col_am30 = _fc(df, "Amarras 3.0m", "Amarras 3")
+        col_am15 = _fc(df, "Amarras 1.5m", "Amarras 1")
+        col_plat = _fc(df, "Plataformas")
+        col_tabl = _fc(df, "Tablones")
+        col_base = _fc(df, "Bases", "Niveladores")
+        col_abra = _fc(df, "Abrazaderas")
         col_fotov = _fc(df, "Foto V", "Foto Verticales")
         col_fotoh = _fc(df, "Foto H", "Foto Horizontales")
 
-        for c in [col_cd, col_cc, col_dif]:
+        for c in [col_cd, col_cc, col_dif, col_diag, col_am30, col_am15,
+                  col_plat, col_tabl, col_base, col_abra]:
             if c:
                 df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0).astype(int)
 
         df["_est"] = df[col_est].astype(str).str.strip() if col_est else "Sin declarar"
 
-        total_aud  = len(df)
-        conformes  = len(df[df["_est"] == "Conforme"])
-        no_conf    = len(df[df["_est"] == "No Conforme"])
-        revisiones = len(df[df["_est"] == "Revision"])
-        sin_decl   = len(df[df["_est"] == "Sin declarar"])
-        pct        = round(conformes / total_aud * 100) if total_aud else 0
+        # ── Filtros ───────────────────────────────────────────────────────────
+        with st.expander("🔍 Filtros", expanded=False):
+            fc1, fc2, fc3 = st.columns(3)
+            opts_pat = ["Todas"] + sorted(df[col_pat].dropna().unique().tolist()) if col_pat else ["Todas"]
+            opts_mov = ["Todos"] + sorted(df[col_mov].dropna().unique().tolist()) if col_mov else ["Todos"]
+            f_pat = fc1.selectbox("Patente", opts_pat)
+            f_est = fc2.selectbox("Estado", ["Todos", "Conforme", "No Conforme", "Revision", "Sin declarar"])
+            f_mov = fc3.selectbox("Movimiento", opts_mov)
+
+        df_f = df.copy()
+        if f_pat != "Todas" and col_pat:
+            df_f = df_f[df_f[col_pat] == f_pat]
+        if f_est != "Todos":
+            df_f = df_f[df_f["_est"] == f_est]
+        if f_mov != "Todos" and col_mov:
+            df_f = df_f[df_f[col_mov] == f_mov]
+
+        df_sorted = df_f.sort_values([col_f, col_h], ascending=False) if col_f and col_h else df_f
 
         # ── KPIs ─────────────────────────────────────────────────────────────
-        k1,k2,k3,k4,k5 = st.columns(5)
-        for col, label, value, sub in [
+        total_aud  = len(df_f)
+        conformes  = len(df_f[df_f["_est"] == "Conforme"])
+        no_conf    = len(df_f[df_f["_est"] == "No Conforme"])
+        revisiones = len(df_f[df_f["_est"] == "Revision"])
+        sin_decl   = len(df_f[df_f["_est"] == "Sin declarar"])
+        pct        = round(conformes / total_aud * 100) if total_aud else 0
+
+        k1, k2, k3, k4, k5 = st.columns(5)
+        for _col, label, value, sub in [
             (k1, "Total",        total_aud,  "auditorías"),
-            (k2, "Conformes",    conformes,  str(pct)+"%"),
+            (k2, "Conformes",    conformes,  str(pct) + "%"),
             (k3, "No Conformes", no_conf,    "diferencia"),
             (k4, "En Revisión",  revisiones, "±1-2 unid."),
             (k5, "Sin declarar", sin_decl,   "sin cantidad"),
         ]:
-            col.markdown(
-                "<div class='metric-card'>"
-                "<div class='metric-label'>" + label + "</div>"
-                "<div class='metric-value'>" + str(value) + "</div>"
-                "<div class='metric-sub'>" + sub + "</div></div>",
+            _col.markdown(
+                f"<div class='metric-card'><div class='metric-label'>{label}</div>"
+                f"<div class='metric-value'>{value}</div>"
+                f"<div class='metric-sub'>{sub}</div></div>",
                 unsafe_allow_html=True
             )
 
         st.markdown("<br>", unsafe_allow_html=True)
 
-        # ── Detalle de un registro ────────────────────────────────────────────
+        # ── Selector de auditoría ─────────────────────────────────────────────
         st.markdown(
-            "<div style='color:" + COL_CIAN + ";font-weight:700;margin-bottom:8px;'>"
-            "🔍 Ver detalle de una auditoría</div>",
+            f"<div style='color:{COL_CIAN};font-weight:700;font-size:1rem;margin-bottom:8px;'>"
+            "🔍 Selecciona una auditoría para ver el detalle completo</div>",
             unsafe_allow_html=True
         )
-        df_sorted = df.sort_values([col_f, col_h], ascending=False) if col_f and col_h else df
 
         def _lbl(row):
-            n  = _v(row, col_n)
-            f  = _v(row, col_f)
-            hr = _v(row, col_h)
-            p  = _v(row, col_pat)
-            return n + " · " + f + " " + hr + " · " + p
+            parts = [
+                _v(row, col_n),
+                _v(row, col_f),
+                _v(row, col_h)[:5] if col_h else "—",
+                _v(row, col_pat),
+                _v(row, col_chof),
+                "[" + _v(row, col_est) + "]",
+            ]
+            return "  ·  ".join(parts)
 
         opciones = [_lbl(row) for _, row in df_sorted.iterrows()]
-        sel_idx  = st.selectbox("Registro:", opciones, label_visibility="collapsed")
+        sel = st.selectbox("Auditoría:", opciones, label_visibility="collapsed")
 
-        if sel_idx is not None:
-            i   = opciones.index(sel_idx)
+        if sel and opciones:
+            i   = opciones.index(sel)
             row = df_sorted.iloc[i]
 
-            # Fila 1: identificación
-            c1, c2, c3 = st.columns(3)
-            c1.metric("N° Auditoría",    _v(row, col_n))
-            c2.metric("Fecha",           _v(row, col_f))
-            c3.metric("Hora",            _v(row, col_h))
-
-            # Fila 2: vehículo y turno
-            c4, c5, c6 = st.columns(3)
-            c4.metric("Patente",         _v(row, col_pat))
-            c5.metric("Chofer",          _v(row, col_chof))
-            c6.metric("Turno",           _v(row, col_t))
-
-            # Fila 3: movimiento y conteo
-            c7, c8, c9 = st.columns(3)
-            c7.metric("Movimiento",      _v(row, col_mov))
-            c8.metric("Declarado",       _v(row, col_cd))
-            c9.metric("Contado",         _v(row, col_cc))
-
-            # Fila 4: resultado
-            c10, c11, c12 = st.columns(3)
-            c10.metric("Diferencia",     _v(row, col_dif))
-            c11.metric("Estado",         _v(row, col_est))
-            c12.metric("Auditado Por",   _v(row, col_aud))
-
-            # Observaciones
-            obs = _v(row, col_obs)
-            if obs != "—":
-                st.info("📝 Observaciones: " + obs)
-
-            # Accesorios / materiales secundarios
-            acc_labels = [
-                ("Diagonales",      col_diag),
-                ("Amarras 3.0m",    col_am30),
-                ("Amarras 1.5m",    col_am15),
-                ("Plataformas",     col_plat),
-                ("Tablones",        col_tabl),
-                ("Bases/Niveladores", col_base),
-                ("Abrazaderas",     col_abra),
-            ]
-            acc_parts = []
-            for lbl_a, col_a in acc_labels:
-                v = _v(row, col_a)
-                if v not in ("—", "0", ""):
-                    acc_parts.append(lbl_a + ": " + v)
-            if acc_parts:
-                st.success("🔩 Accesorios registrados — " + " · ".join(acc_parts))
+            # Estado → color y CSS
+            estado = _v(row, col_est)
+            if estado == "Conforme":
+                est_css = f"background:{COL_VERDE}22;color:{COL_VERDE};border:1px solid {COL_VERDE}66;"
+            elif estado == "No Conforme":
+                est_css = f"background:{COL_ROJO}22;color:{COL_ROJO};border:1px solid {COL_ROJO}66;"
+            elif estado == "Revision":
+                est_css = f"background:{COL_AMARILLO}22;color:{COL_AMARILLO};border:1px solid {COL_AMARILLO}66;"
             else:
-                st.caption("Sin accesorios registrados en esta auditoría.")
+                est_css = f"background:{COL_PIZARRA}22;color:#8899BB;border:1px solid {COL_PIZARRA}66;"
 
-            # Fotos
-            url_v = _v(row, col_fotov)
-            url_h = _v(row, col_fotoh)
-            if url_v != "—" or url_h != "—":
-                st.markdown(
-                    "<div style='color:#00D4FF;font-weight:600;margin:14px 0 8px 0;'>"
-                    "📷 Fotografías del registro</div>",
+            # ── Cabecera del detalle ──────────────────────────────────────────
+            st.markdown(
+                f"<div style='background:{COL_CARBONO};border:1px solid {COL_AZUL}44;"
+                f"border-radius:12px;padding:16px 20px;margin:10px 0 14px 0;'>"
+                f"<div style='display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;'>"
+                f"<div style='font-size:1.5rem;font-weight:800;color:{COL_CIAN};'>{_v(row, col_n)}</div>"
+                f"<div style='font-size:0.85rem;font-weight:700;padding:5px 18px;border-radius:20px;{est_css}'>{estado}</div>"
+                f"</div>"
+                f"<div style='display:flex;gap:18px;flex-wrap:wrap;font-size:0.82rem;color:#8899BB;'>"
+                f"<span>📅 {_v(row, col_f)}</span>"
+                f"<span>🕐 {_v(row, col_h)}</span>"
+                f"<span>🌙 {_v(row, col_t)}</span>"
+                f"<span>🚛 {_v(row, col_pat)}</span>"
+                f"<span>👤 {_v(row, col_chof)}</span>"
+                f"<span>🔄 {_v(row, col_mov)}</span>"
+                f"<span>👷 {_v(row, col_aud)}</span>"
+                f"</div></div>",
+                unsafe_allow_html=True
+            )
+
+            # ── Conteo V / H / totales ────────────────────────────────────────
+            mat_str = _v(row, col_mat)
+            mv = _re.search(r'[Vv][:\s·]+(\d+)', mat_str)
+            mh = _re.search(r'[Hh][:\s·]+(\d+)', mat_str)
+            v_cnt = int(mv.group(1)) if mv else 0
+            h_cnt = int(mh.group(1)) if mh else 0
+
+            diff_val = _v(row, col_dif)
+            try:
+                diff_int = int(diff_val)
+                diff_color = COL_VERDE if diff_int == 0 else (COL_AMARILLO if abs(diff_int) <= 2 else COL_ROJO)
+            except Exception:
+                diff_int  = 0
+                diff_color = "#8899BB"
+
+            dc1, dc2, dc3, dc4, dc5 = st.columns(5)
+            dc1.markdown(
+                f"<div class='metric-card'><div class='metric-label'>🔵 Verticales</div>"
+                f"<div class='metric-value' style='color:{COL_AZUL};'>{v_cnt}</div>"
+                f"<div class='metric-sub'>contados</div></div>",
+                unsafe_allow_html=True
+            )
+            dc2.markdown(
+                f"<div class='metric-card'><div class='metric-label'>🔴 Horizontales</div>"
+                f"<div class='metric-value' style='color:{COL_ROJO};'>{h_cnt}</div>"
+                f"<div class='metric-sub'>contados</div></div>",
+                unsafe_allow_html=True
+            )
+            dc3.markdown(
+                f"<div class='metric-card'><div class='metric-label'>📦 Total contado</div>"
+                f"<div class='metric-value' style='color:{COL_CIAN};'>{_v(row, col_cc)}</div>"
+                f"<div class='metric-sub'>V + H</div></div>",
+                unsafe_allow_html=True
+            )
+            dc4.markdown(
+                f"<div class='metric-card'><div class='metric-label'>📋 Declarado</div>"
+                f"<div class='metric-value'>{_v(row, col_cd)}</div>"
+                f"<div class='metric-sub'>por chofer</div></div>",
+                unsafe_allow_html=True
+            )
+            dc5.markdown(
+                f"<div class='metric-card'><div class='metric-label'>⚖ Diferencia</div>"
+                f"<div class='metric-value' style='color:{diff_color};'>"
+                f"{('+' if diff_int > 0 else '') + str(diff_int) if diff_val != '—' else '—'}</div>"
+                f"<div class='metric-sub'>{'✓ exacto' if diff_int == 0 and diff_val != '—' else ''}</div></div>",
+                unsafe_allow_html=True
+            )
+
+            st.markdown("<br>", unsafe_allow_html=True)
+
+            # ── Accesorios ────────────────────────────────────────────────────
+            st.markdown(
+                f"<div style='color:{COL_CIAN};font-weight:700;margin-bottom:10px;'>🔩 Accesorios registrados</div>",
+                unsafe_allow_html=True
+            )
+            acc_def = [
+                ("Diagonales",        col_diag, COL_AZUL),
+                ("Amarras 3.0m",      col_am30, COL_ROJO),
+                ("Amarras 1.5m",      col_am15, COL_AMARILLO),
+                ("Plataformas",       col_plat, COL_VERDE),
+                ("Tablones",          col_tabl, "#A78BFA"),
+                ("Bases/Niveladores", col_base, COL_CIAN),
+                ("Abrazaderas",       col_abra, "#F97316"),
+            ]
+            acc_cols = st.columns(7)
+            hay_acc = False
+            for idx_a, (lbl_a, col_a, color_a) in enumerate(acc_def):
+                v_int = _int(row, col_a)
+                if v_int > 0:
+                    hay_acc = True
+                acc_cols[idx_a].markdown(
+                    f"<div class='metric-card'>"
+                    f"<div class='metric-label' style='font-size:0.68rem;'>{lbl_a}</div>"
+                    f"<div class='metric-value' style='color:{color_a if v_int > 0 else '#3D4E66'};font-size:1.7rem;'>{v_int}</div>"
+                    f"</div>",
                     unsafe_allow_html=True
                 )
-                cf1, cf2 = st.columns(2)
-                if url_v != "—":
-                    cf1.image(url_v, caption="Verticales", use_container_width=True)
+            if not hay_acc:
+                st.caption("Sin accesorios en esta auditoría — todos en cero.")
+
+            st.markdown("<br>", unsafe_allow_html=True)
+
+            # ── Fotografías ───────────────────────────────────────────────────
+            st.markdown(
+                f"<div style='color:{COL_CIAN};font-weight:700;margin-bottom:10px;'>📷 Fotografías del registro</div>",
+                unsafe_allow_html=True
+            )
+            url_v = _v(row, col_fotov)
+            url_h = _v(row, col_fotoh)
+            cf1, cf2 = st.columns(2)
+            with cf1:
+                if url_v not in ("—", "") and url_v.startswith("http"):
+                    st.image(url_v, caption="📷 Verticales", use_container_width=True)
                 else:
-                    cf1.caption("Sin foto de verticales")
-                if url_h != "—":
-                    cf2.image(url_h, caption="Horizontales", use_container_width=True)
+                    st.markdown(
+                        f"<div style='background:{COL_CARBONO};border:2px dashed {COL_AZUL}33;"
+                        f"border-radius:10px;height:180px;display:flex;align-items:center;"
+                        f"justify-content:center;color:#475569;font-size:0.85rem;'>"
+                        f"📷 Sin foto de Verticales</div>",
+                        unsafe_allow_html=True
+                    )
+                st.caption("Foto Verticales")
+            with cf2:
+                if url_h not in ("—", "") and url_h.startswith("http"):
+                    st.image(url_h, caption="📷 Horizontales", use_container_width=True)
                 else:
-                    cf2.caption("Sin foto de horizontales")
-            else:
-                st.caption("Sin fotos guardadas en este registro.")
+                    st.markdown(
+                        f"<div style='background:{COL_CARBONO};border:2px dashed {COL_AZUL}33;"
+                        f"border-radius:10px;height:180px;display:flex;align-items:center;"
+                        f"justify-content:center;color:#475569;font-size:0.85rem;'>"
+                        f"📷 Sin foto de Horizontales</div>",
+                        unsafe_allow_html=True
+                    )
+                st.caption("Foto Horizontales")
+
+            # ── Observaciones ─────────────────────────────────────────────────
+            obs = _v(row, col_obs)
+            if obs not in ("—", ""):
+                st.markdown("<br>", unsafe_allow_html=True)
+                st.info("📝 **Observaciones:** " + obs)
 
         st.markdown("---")
 
         # ── Tabla completa ────────────────────────────────────────────────────
         st.markdown(
-            "<div style='color:" + COL_CIAN + ";font-weight:700;margin-bottom:8px;'>"
-            "📋 Todos los registros</div>",
+            f"<div style='color:{COL_CIAN};font-weight:700;margin-bottom:8px;'>📋 Todos los registros</div>",
             unsafe_allow_html=True
         )
         cols_ocultar = {c for c in [col_aud, col_diag, col_am30, col_am15,
                                      col_plat, col_tabl, col_base, col_abra,
                                      col_fotov, col_fotoh] if c}
-        cols_mostrar = [c for c in df.columns if c not in cols_ocultar and not c.startswith("_")]
+        cols_mostrar = [c for c in df_f.columns if c not in cols_ocultar and not c.startswith("_")]
         st.dataframe(
-            df_sorted[cols_mostrar] if col_f else df[cols_mostrar],
+            df_sorted[cols_mostrar],
             use_container_width=True, hide_index=True
         )
 
@@ -818,20 +924,20 @@ with tab_dashboard:
 
         with g1:
             st.markdown(
-                "<div style='color:" + COL_CIAN + ";font-weight:600;margin-bottom:6px;'>"
-                "Estado de auditorías</div>", unsafe_allow_html=True
+                f"<div style='color:{COL_CIAN};font-weight:600;margin-bottom:6px;'>Estado de auditorías</div>",
+                unsafe_allow_html=True
             )
-            d = df["_est"].value_counts().reset_index()
+            d = df_f["_est"].value_counts().reset_index()
             d.columns = ["Estado", "N"]
             st.bar_chart(d.set_index("Estado"))
 
         with g2:
             st.markdown(
-                "<div style='color:" + COL_CIAN + ";font-weight:600;margin-bottom:6px;'>"
-                "Salidas vs Devoluciones</div>", unsafe_allow_html=True
+                f"<div style='color:{COL_CIAN};font-weight:600;margin-bottom:6px;'>Salidas vs Devoluciones</div>",
+                unsafe_allow_html=True
             )
             if col_mov:
-                d = df[col_mov].value_counts().reset_index()
+                d = df_f[col_mov].value_counts().reset_index()
                 d.columns = ["Tipo", "N"]
                 st.bar_chart(d.set_index("Tipo"), color=COL_CIAN)
             else:
@@ -840,11 +946,11 @@ with tab_dashboard:
         g3, g4 = st.columns(2)
         with g3:
             st.markdown(
-                "<div style='color:" + COL_CIAN + ";font-weight:600;margin-bottom:6px;'>"
-                "Auditorías por patente</div>", unsafe_allow_html=True
+                f"<div style='color:{COL_CIAN};font-weight:600;margin-bottom:6px;'>Auditorías por patente</div>",
+                unsafe_allow_html=True
             )
             if col_pat:
-                d = df[col_pat].value_counts().reset_index()
+                d = df_f[col_pat].value_counts().reset_index()
                 d.columns = ["Patente", "N"]
                 st.bar_chart(d.set_index("Patente"), color=COL_AZUL)
             else:
@@ -852,39 +958,35 @@ with tab_dashboard:
 
         with g4:
             st.markdown(
-                "<div style='color:" + COL_CIAN + ";font-weight:600;margin-bottom:6px;'>"
-                "Auditorías por chofer</div>", unsafe_allow_html=True
+                f"<div style='color:{COL_CIAN};font-weight:600;margin-bottom:6px;'>Auditorías por chofer</div>",
+                unsafe_allow_html=True
             )
             if col_chof:
-                d = df[col_chof].value_counts().reset_index()
+                d = df_f[col_chof].value_counts().reset_index()
                 d.columns = ["Chofer", "N"]
                 st.bar_chart(d.set_index("Chofer"), color=COL_AZUL)
             else:
                 st.caption("Sin datos de chofer")
 
         # ── Alertas ───────────────────────────────────────────────────────────
-        alertas = df[df["_est"].isin(["No Conforme","Revision"])].tail(10)
+        alertas = df_f[df_f["_est"].isin(["No Conforme", "Revision"])].tail(10)
         if not alertas.empty:
             st.markdown("---")
             st.markdown(
-                "<div style='color:" + COL_AMARILLO + ";font-weight:700;margin-bottom:8px;'>"
-                "⚠ Últimas diferencias detectadas</div>",
+                f"<div style='color:{COL_AMARILLO};font-weight:700;margin-bottom:8px;'>⚠ Últimas diferencias detectadas</div>",
                 unsafe_allow_html=True
             )
             for _, row in alertas.iterrows():
-                try:
-                    dv = int(float(_v(row, col_dif).replace("—","0")))
-                except Exception:
-                    dv = 0
+                dv = _int(row, col_dif)
                 estado_r = _v(row, col_est)
-                badge    = "badge-alerta" if estado_r == "No Conforme" else "badge-revision"
+                badge = "badge-alerta" if estado_r == "No Conforme" else "badge-revision"
                 st.markdown(
-                    "<div class='audit-row'>"
-                    "<span class='audit-row-label'>" + _v(row, col_n) + "</span>"
-                    "<span class='audit-row-val'>" + _v(row, col_pat) + " · " + _v(row, col_chof) + "</span>"
-                    "<span style='color:#8899BB;'>" + _v(row, col_f) + " " + _v(row, col_h) + "</span>"
-                    "<span style='color:" + COL_AMARILLO + ";font-weight:700;'>Dif: " + f"{dv:+d}" + "</span>"
-                    "<span class='" + badge + "'>" + estado_r + "</span>"
-                    "</div>",
+                    f"<div class='audit-row'>"
+                    f"<span class='audit-row-label'>{_v(row, col_n)}</span>"
+                    f"<span class='audit-row-val'>{_v(row, col_pat)} · {_v(row, col_chof)}</span>"
+                    f"<span style='color:#8899BB;'>{_v(row, col_f)} {_v(row, col_h)}</span>"
+                    f"<span style='color:{COL_AMARILLO};font-weight:700;'>Dif: {dv:+d}</span>"
+                    f"<span class='{badge}'>{estado_r}</span>"
+                    f"</div>",
                     unsafe_allow_html=True
                 )
