@@ -1,6 +1,6 @@
 import streamlit as st
 import streamlit.components.v1 as components
-from PIL import Image, ImageOps
+from PIL import Image, ImageOps, ImageDraw, ImageFont
 import gspread
 import requests as _requests
 import datetime
@@ -130,13 +130,51 @@ def get_clients():
 # ─── SUPABASE STORAGE (fotos de auditoría) ────────────────────────────────────
 SUPA_BUCKET = "AuditoriaFotos"
 
+def foto_con_puntos(img_pil, puntos, tipo):
+    """Devuelve una copia de la foto con los puntos del conteo dibujados."""
+    img = img_pil.copy()
+    draw = ImageDraw.Draw(img)
+    color = "#2D6BE4" if tipo == "vertical" else "#FF3D5A"
+    r = max(9, int(min(img.size) * 0.022))
+    try:
+        font = ImageFont.truetype("DejaVuSans-Bold.ttf", int(r * 1.2))
+    except Exception:
+        font = ImageFont.load_default()
+    for i, p in enumerate(puntos):
+        x, y = int(p[0]), int(p[1])
+        draw.ellipse([x - r, y - r, x + r, y + r], fill=color, outline="white", width=2)
+        num = str(i + 1)
+        try:
+            bb = draw.textbbox((0, 0), num, font=font)
+            tw, th = bb[2] - bb[0], bb[3] - bb[1]
+            draw.text((x - tw / 2, y - th / 2 - bb[1]), num, fill="white", font=font)
+        except Exception:
+            draw.text((x - 4, y - 6), num, fill="white")
+    # Banda inferior con el total
+    total = str(len(puntos))
+    etiqueta = ("VERTICALES: " if tipo == "vertical" else "HORIZONTALES: ") + total
+    band_h = max(26, int(img.size[1] * 0.055))
+    nueva = Image.new("RGB", (img.size[0], img.size[1] + band_h), "#0A0A0F")
+    nueva.paste(img, (0, 0))
+    d2 = ImageDraw.Draw(nueva)
+    try:
+        f2 = ImageFont.truetype("DejaVuSans-Bold.ttf", int(band_h * 0.55))
+    except Exception:
+        f2 = ImageFont.load_default()
+    d2.text((10, img.size[1] + int(band_h * 0.2)), etiqueta, fill="#00D4FF", font=f2)
+    return nueva
+
 def subir_foto_supabase(img_pil, nombre_archivo):
     """Sube la foto. Devuelve (url, error). Si error != "" la subida falló."""
     try:
         buf = io.BytesIO()
         img_pil.save(buf, format="JPEG", quality=85)
         supa_url = st.secrets["supabase"]["url"].rstrip("/")
-        supa_key = st.secrets["supabase"]["key"]
+        supa_key = st.secrets["supabase"]["key"].strip()
+        if any(ord(ch) > 127 for ch in supa_key):
+            return "", ("La clave de Supabase guardada en los secretos de Streamlit "
+                        "está CORRUPTA (contiene caracteres inválidos como '•'). "
+                        "Vuelve a pegar la clave anon completa en Settings → Secrets.")
         upload_url = supa_url + "/storage/v1/object/" + SUPA_BUCKET + "/" + nombre_archivo
         resp = _requests.post(
             upload_url,
@@ -588,16 +626,24 @@ with tab_auditoria:
                     foto_h_url = ""
                     foto_errs  = []
                     if st.session_state.get("img_orig_v") is not None:
-                        foto_v_url, err_v = subir_foto_supabase(
+                        img_v = foto_con_puntos(
                             st.session_state["img_orig_v"],
-                            n_aud + "_V_" + ts + ".jpg"
+                            st.session_state.get("puntos_v", []),
+                            "vertical"
+                        )
+                        foto_v_url, err_v = subir_foto_supabase(
+                            img_v, n_aud + "_V_" + ts + ".jpg"
                         )
                         if err_v:
                             foto_errs.append("Foto V: " + err_v)
                     if st.session_state.get("img_orig_h") is not None:
-                        foto_h_url, err_h = subir_foto_supabase(
+                        img_h = foto_con_puntos(
                             st.session_state["img_orig_h"],
-                            n_aud + "_H_" + ts + ".jpg"
+                            st.session_state.get("puntos_h", []),
+                            "horizontal"
+                        )
+                        foto_h_url, err_h = subir_foto_supabase(
+                            img_h, n_aud + "_H_" + ts + ".jpg"
                         )
                         if err_h:
                             foto_errs.append("Foto H: " + err_h)
