@@ -131,10 +131,11 @@ def get_clients():
 SUPA_BUCKET = "AuditoriaFotos"
 
 def subir_foto_supabase(img_pil, nombre_archivo):
+    """Sube la foto. Devuelve (url, error). Si error != "" la subida falló."""
     try:
         buf = io.BytesIO()
         img_pil.save(buf, format="JPEG", quality=85)
-        supa_url = st.secrets["supabase"]["url"]
+        supa_url = st.secrets["supabase"]["url"].rstrip("/")
         supa_key = st.secrets["supabase"]["key"]
         upload_url = supa_url + "/storage/v1/object/" + SUPA_BUCKET + "/" + nombre_archivo
         resp = _requests.post(
@@ -145,13 +146,15 @@ def subir_foto_supabase(img_pil, nombre_archivo):
                 "Content-Type":  "image/jpeg",
                 "x-upsert":      "true",
             },
-            timeout=15,
+            timeout=20,
         )
         if resp.status_code in (200, 201):
-            return supa_url + "/storage/v1/object/public/" + SUPA_BUCKET + "/" + nombre_archivo
-        return ""
-    except Exception:
-        return ""
+            return supa_url + "/storage/v1/object/public/" + SUPA_BUCKET + "/" + nombre_archivo, ""
+        return "", "HTTP " + str(resp.status_code) + ": " + resp.text[:200]
+    except KeyError as e:
+        return "", "Falta el secreto de Supabase en Streamlit: " + str(e)
+    except Exception as e:
+        return "", repr(e)
 
 # ─── FORMATO PROFESIONAL SHEETS ───────────────────────────────────────────────
 def formato_sheets(ws, sheets_service):
@@ -278,11 +281,17 @@ def get_sheet(gc, sheets_service=None):
     return ws
 
 def get_next_audit_number(ws):
+    # Busca el número AUD más alto ya usado (no depende de la posición de filas)
     data = ws.get_all_values()
-    # Fila 1 = título, Fila 2 = encabezados, Fila 3+ = datos
-    if len(data) <= 2:
-        return "AUD-0001"
-    return "AUD-" + str(len(data) - 1).zfill(4)
+    max_n = 0
+    for row in data:
+        if row and row[0].strip().upper().startswith("AUD-"):
+            try:
+                n = int(row[0].strip().split("-")[1])
+                max_n = max(max_n, n)
+            except (ValueError, IndexError):
+                pass
+    return "AUD-" + str(max_n + 1).zfill(4)
 
 def guardar_en_sheets(gc, registro):
     ws = get_sheet(gc)
@@ -304,11 +313,28 @@ def guardar_en_sheets(gc, registro):
 def cargar_historial(gc):
     ws     = get_sheet(gc)
     values = ws.get_all_values()
-    if len(values) <= 2:
+    if not values:
         return []
-    headers = values[1]   # Fila 2 son los encabezados
+    # Detectar automáticamente la fila de encabezados (busca "Patente" y "Chofer")
+    hdr_idx = None
+    for i, row in enumerate(values[:6]):
+        joined = " ".join(row).lower()
+        if "patente" in joined and "chofer" in joined:
+            hdr_idx = i
+            break
+    if hdr_idx is None:
+        # Fallback: si las filas de datos empiezan con AUD-, usar HEADERS fijos
+        records = []
+        for row in values:
+            if row and row[0].strip().upper().startswith("AUD-"):
+                row_p = row + [""] * (len(HEADERS) - len(row))
+                records.append(dict(zip(HEADERS, row_p)))
+        return records
+    headers = [h.strip() for h in values[hdr_idx]]
     records = []
-    for row in values[2:]:
+    for row in values[hdr_idx + 1:]:
+        if not any(cell.strip() for cell in row):
+            continue
         row_p = row + [""] * (len(headers) - len(row))
         records.append(dict(zip(headers, row_p)))
     return records
@@ -392,7 +418,7 @@ _ss_defaults = {
     "puntos_v": [], "puntos_h": [],
     "img_orig_v": None, "img_b64_v": None,
     "img_orig_h": None, "img_b64_h": None,
-    "guardado": False,
+    "guardado": False, "foto_warn": "",
     "last_audit_id": "", "last_audit_estado": "",
     "s_patente": PATENTES[0], "s_chofer": CHOFERES[0], "s_turno": TURNOS[0],
     "s_tipo_mov": MOVIMIENTOS[0], "s_observaciones": "",
@@ -450,13 +476,16 @@ with tab_auditoria:
         n_est = st.session_state.get("last_audit_estado", "")
         st.markdown("<br>", unsafe_allow_html=True)
         st.success("✅ Auditoría **" + n_id + "** guardada · Estado: **" + n_est + "**")
+        _fw = st.session_state.get("foto_warn", "")
+        if _fw:
+            st.warning("⚠️ El registro se guardó, pero las fotos NO se subieron:\n\n" + _fw)
         st.markdown("<br>", unsafe_allow_html=True)
         if st.button("🔄 Nueva auditoría", type="primary", use_container_width=True):
             _reset = {
                 "puntos_v": [], "puntos_h": [],
                 "img_orig_v": None, "img_b64_v": None,
                 "img_orig_h": None, "img_b64_h": None,
-                "guardado": False,
+                "guardado": False, "foto_warn": "",
                 "last_audit_id": "", "last_audit_estado": "",
                 "upload_counter": st.session_state.get("upload_counter", 0) + 1,
                 "uc_v": st.session_state.get("uc_v", 0) + 1,
@@ -557,16 +586,22 @@ with tab_auditoria:
 
                     foto_v_url = ""
                     foto_h_url = ""
+                    foto_errs  = []
                     if st.session_state.get("img_orig_v") is not None:
-                        foto_v_url = subir_foto_supabase(
+                        foto_v_url, err_v = subir_foto_supabase(
                             st.session_state["img_orig_v"],
                             n_aud + "_V_" + ts + ".jpg"
                         )
+                        if err_v:
+                            foto_errs.append("Foto V: " + err_v)
                     if st.session_state.get("img_orig_h") is not None:
-                        foto_h_url = subir_foto_supabase(
+                        foto_h_url, err_h = subir_foto_supabase(
                             st.session_state["img_orig_h"],
                             n_aud + "_H_" + ts + ".jpg"
                         )
+                        if err_h:
+                            foto_errs.append("Foto H: " + err_h)
+                    st.session_state["foto_warn"] = " | ".join(foto_errs)
 
                     guardar_en_sheets(gc, {
                         "n_auditoria":    n_aud,
@@ -743,11 +778,12 @@ with tab_dashboard:
             ]
             return "  ·  ".join(parts)
 
-        opciones = [_lbl(row) for _, row in df_sorted.iterrows()]
+        PLACEHOLDER = "— Selecciona una auditoría de la lista —"
+        opciones = [PLACEHOLDER] + [_lbl(row) for _, row in df_sorted.iterrows()]
         sel = st.selectbox("Auditoría:", opciones, label_visibility="collapsed")
 
-        if sel and opciones:
-            i   = opciones.index(sel)
+        if sel and sel != PLACEHOLDER:
+            i   = opciones.index(sel) - 1
             row = df_sorted.iloc[i]
 
             # Estado → color y CSS
@@ -762,21 +798,31 @@ with tab_dashboard:
                 est_css = f"background:{COL_PIZARRA}22;color:#8899BB;border:1px solid {COL_PIZARRA}66;"
 
             # ── Cabecera del detalle ──────────────────────────────────────────
+            _campos = [
+                ("Fecha",       _v(row, col_f)),
+                ("Hora",        _v(row, col_h)),
+                ("Turno",       _v(row, col_t)),
+                ("Patente",     _v(row, col_pat)),
+                ("Chofer",      _v(row, col_chof)),
+                ("Movimiento",  _v(row, col_mov)),
+                ("Auditado por",_v(row, col_aud)),
+            ]
+            _campos_html = "".join(
+                f"<div style='min-width:110px;'>"
+                f"<div style='font-size:0.68rem;color:#5A6B85;text-transform:uppercase;letter-spacing:0.05em;'>{lbl_c}</div>"
+                f"<div style='font-size:0.9rem;font-weight:600;color:#C8D4E8;'>{val_c}</div>"
+                f"</div>"
+                for lbl_c, val_c in _campos
+            )
             st.markdown(
                 f"<div style='background:{COL_CARBONO};border:1px solid {COL_AZUL}44;"
                 f"border-radius:12px;padding:16px 20px;margin:10px 0 14px 0;'>"
-                f"<div style='display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;'>"
+                f"<div style='display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;'>"
                 f"<div style='font-size:1.5rem;font-weight:800;color:{COL_CIAN};'>{_v(row, col_n)}</div>"
                 f"<div style='font-size:0.85rem;font-weight:700;padding:5px 18px;border-radius:20px;{est_css}'>{estado}</div>"
                 f"</div>"
-                f"<div style='display:flex;gap:18px;flex-wrap:wrap;font-size:0.82rem;color:#8899BB;'>"
-                f"<span>📅 {_v(row, col_f)}</span>"
-                f"<span>🕐 {_v(row, col_h)}</span>"
-                f"<span>🌙 {_v(row, col_t)}</span>"
-                f"<span>🚛 {_v(row, col_pat)}</span>"
-                f"<span>👤 {_v(row, col_chof)}</span>"
-                f"<span>🔄 {_v(row, col_mov)}</span>"
-                f"<span>👷 {_v(row, col_aud)}</span>"
+                f"<div style='display:flex;gap:14px;flex-wrap:wrap;'>"
+                f"{_campos_html}"
                 f"</div></div>",
                 unsafe_allow_html=True
             )
