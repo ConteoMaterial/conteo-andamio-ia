@@ -113,6 +113,7 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 # ─── GOOGLE AUTH ──────────────────────────────────────────────────────────────
+@st.cache_resource
 def get_clients():
     creds_dict = dict(st.secrets["gcp_service_account"])
     pk = creds_dict.get("private_key", "")
@@ -376,6 +377,12 @@ def cargar_historial(gc):
         row_p = row + [""] * (len(headers) - len(row))
         records.append(dict(zip(headers, row_p)))
     return records
+
+@st.cache_data(ttl=120, show_spinner=False)
+def cargar_historial_cache():
+    """Lee el historial máximo una vez cada 2 min para no agotar la cuota de Google."""
+    gc, _ = get_clients()
+    return cargar_historial(gc)
 
 # ─── IMAGEN ───────────────────────────────────────────────────────────────────
 def cargar_imagen(fuente):
@@ -672,6 +679,7 @@ with tab_auditoria:
                     st.session_state["guardado"]          = True
                     st.session_state["last_audit_id"]     = n_aud
                     st.session_state["last_audit_estado"] = estado
+                    cargar_historial_cache.clear()
                     _ok = True
                 except Exception as e:
                     _err = repr(e)
@@ -690,12 +698,12 @@ with tab_dashboard:
 
     col_act, _ = st.columns([1, 5])
     if col_act.button("🔄 Actualizar datos", use_container_width=True):
+        cargar_historial_cache.clear()
         st.rerun()
 
-    # ── Cargar historial ─────────────────────────────────────────────────────
+    # ── Cargar historial (con caché para no agotar cuota de Google) ──────────
     try:
-        _gc2, _ = get_clients()
-        historial = cargar_historial(_gc2)
+        historial = cargar_historial_cache()
     except Exception as e:
         st.error("No se pudo cargar el historial: " + str(e))
         historial = []
